@@ -16,6 +16,7 @@ import {
   removeDomain
 } from './store.js';
 import { normalizeDomain, scanDomain } from './monitor.js';
+import { searchDotdb } from './dotdb.js';
 
 const token = process.env.DISCORD_TOKEN;
 const clientId = process.env.DISCORD_CLIENT_ID;
@@ -84,7 +85,15 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName('debugchannels')
-    .setDescription('List channels visible to the bot')
+    .setDescription('List channels visible to the bot'),
+
+  new SlashCommandBuilder()
+    .setName('find')
+    .setDescription('Find registered domains by keyword')
+    .addStringOption(option => option
+      .setName('keyword')
+      .setDescription('Example: pump')
+      .setRequired(true))
 ].map(command => command.toJSON());
 
 function validDomain(domain) {
@@ -264,6 +273,31 @@ client.on('interactionCreate', async interaction => {
         hostnames: ['test.example.com']
       });
       return interaction.editReply('Test alert sent.');
+    }
+
+    if (interaction.commandName === 'find') {
+      await interaction.deferReply({ ephemeral: true });
+
+      const keyword = interaction.options
+        .getString('keyword')
+        .trim()
+        .toLowerCase();
+
+      if (!/^[a-z0-9-]{1,63}$/.test(keyword)) {
+        return interaction.editReply(
+          'Use a keyword containing only letters, numbers, or hyphens.'
+        );
+      }
+
+      const domains = await searchDotdb(keyword);
+      const results = domains.slice(0, 90);
+
+      return interaction.editReply(
+        results.length
+          ? '**Registered domains containing `' + keyword + '`: **\n\n' +
+            results.map(domain => '`' + domain + '`').join('\n')
+          : 'No registered domains found for `' + keyword + '`.'
+      );
     }
 
     if (interaction.commandName === 'scan') {
