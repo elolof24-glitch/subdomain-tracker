@@ -19,35 +19,69 @@ import { normalizeDomain, scanDomain } from './monitor.js';
 
 const token = process.env.DISCORD_TOKEN;
 const clientId = process.env.DISCORD_CLIENT_ID;
-const guildId = process.env.DISCORD_GUILD_ID;
-const alertChannelId = process.env.DISCORD_ALERT_CHANNEL_ID;
-const alertRoleId = process.env.DISCORD_ALERT_ROLE_ID;
+const guildId = String(process.env.DISCORD_GUILD_ID || '').trim();
 
-if (!token || !clientId) throw new Error('DISCORD_TOKEN and DISCORD_CLIENT_ID are required');
-if (!guildId) throw new Error('DISCORD_GUILD_ID is required');
-if (!alertChannelId) throw new Error('DISCORD_ALERT_CHANNEL_ID is required');
+const rawChannelId = String(
+  process.env.DISCORD_ALERT_CHANNEL_ID || ''
+).trim();
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+const alertChannelId = rawChannelId.includes('/')
+  ? rawChannelId.split('/').pop()
+  : rawChannelId;
+
+const alertRoleId = String(
+  process.env.DISCORD_ALERT_ROLE_ID || ''
+).trim();
+
+if (!token || !clientId) {
+  throw new Error('DISCORD_TOKEN and DISCORD_CLIENT_ID are required');
+}
+
+if (!guildId) {
+  throw new Error('DISCORD_GUILD_ID is required');
+}
+
+if (!alertChannelId) {
+  throw new Error('DISCORD_ALERT_CHANNEL_ID is required');
+}
+
+const client = new Client({
+  intents: [GatewayIntentBits.Guilds]
+});
 
 const commands = [
   new SlashCommandBuilder()
     .setName('add')
     .setDescription('Monitor a domain for new subdomains')
-    .addStringOption(o => o.setName('domain').setDescription('Example: pump.fun').setRequired(true)),
+    .addStringOption(option => option
+      .setName('domain')
+      .setDescription('Example: pump.fun')
+      .setRequired(true)),
+
   new SlashCommandBuilder()
     .setName('remove')
     .setDescription('Stop monitoring a domain')
-    .addStringOption(o => o.setName('domain').setDescription('Example: pump.fun').setRequired(true)),
+    .addStringOption(option => option
+      .setName('domain')
+      .setDescription('Example: pump.fun')
+      .setRequired(true)),
+
   new SlashCommandBuilder()
     .setName('list')
     .setDescription('List monitored domains'),
+
   new SlashCommandBuilder()
     .setName('scan')
     .setDescription('Scan now')
-    .addStringOption(o => o.setName('domain').setDescription('Optional domain; blank scans all').setRequired(false)),
+    .addStringOption(option => option
+      .setName('domain')
+      .setDescription('Optional domain; blank scans all')
+      .setRequired(false)),
+
   new SlashCommandBuilder()
     .setName('testalert')
     .setDescription('Test the alert channel and role mention'),
+
   new SlashCommandBuilder()
     .setName('debugchannels')
     .setDescription('List channels visible to the bot')
@@ -59,7 +93,10 @@ function validDomain(domain) {
 
 async function registerCommands() {
   const rest = new REST({ version: '10' }).setToken(token);
-  await rest.put(Routes.applicationGuildCommands(clientId, guildId), { body: commands });
+  await rest.put(
+    Routes.applicationGuildCommands(clientId, guildId),
+    { body: commands }
+  );
 }
 
 function alertEmbed(domain, hostnames) {
@@ -98,7 +135,10 @@ async function getAlertChannel() {
     );
   }
 
-  if (channel.type !== ChannelType.GuildText && channel.type !== ChannelType.GuildAnnouncement) {
+  if (
+    channel.type !== ChannelType.GuildText &&
+    channel.type !== ChannelType.GuildAnnouncement
+  ) {
     throw new Error('Alert channel must be a normal text or announcement channel');
   }
 
@@ -107,9 +147,11 @@ async function getAlertChannel() {
   if (!permissions?.has(PermissionFlagsBits.ViewChannel)) {
     throw new Error('Bot lacks View Channel permission in the alert channel');
   }
+
   if (!permissions.has(PermissionFlagsBits.SendMessages)) {
     throw new Error('Bot lacks Send Messages permission in the alert channel');
   }
+
   if (!permissions.has(PermissionFlagsBits.EmbedLinks)) {
     throw new Error('Bot lacks Embed Links permission in the alert channel');
   }
@@ -166,7 +208,9 @@ client.on('interactionCreate', async interaction => {
       await interaction.deferReply({ ephemeral: true });
       const domain = normalizeDomain(interaction.options.getString('domain'));
 
-      if (!validDomain(domain)) return interaction.editReply('Use a domain such as `pump.fun`.');
+      if (!validDomain(domain)) {
+        return interaction.editReply('Use a domain such as `pump.fun`.');
+      }
 
       addDomain(domain);
       return interaction.editReply(
@@ -180,15 +224,20 @@ client.on('interactionCreate', async interaction => {
       const result = removeDomain(domain);
 
       return interaction.editReply(
-        result.changes ? 'Stopped monitoring **' + domain + '**.' : '**' + domain + '** was not monitored.'
+        result.changes
+          ? 'Stopped monitoring **' + domain + '**.'
+          : '**' + domain + '** was not monitored.'
       );
     }
 
     if (interaction.commandName === 'list') {
       const domains = listDomains();
+
       return interaction.reply({
         content: domains.length
-          ? domains.map(item => '• **' + item.domain + '** — last scan: ' + (item.last_scan || 'never')).join('\n')
+          ? domains.map(item =>
+              '• **' + item.domain + '** — last scan: ' + (item.last_scan || 'never')
+            ).join('\n')
           : 'No domains are monitored.',
         ephemeral: true
       });
@@ -200,7 +249,9 @@ client.on('interactionCreate', async interaction => {
       const channels = await guild.channels.fetch();
       const output = [...channels.values()]
         .filter(Boolean)
-        .map(channel => (channel.name || 'unnamed') + ' — ' + channel.id + ' — type ' + channel.type)
+        .map(channel =>
+          (channel.name || 'unnamed') + ' — ' + channel.id + ' — type ' + channel.type
+        )
         .join('\n');
 
       return interaction.editReply(output || 'No channels are visible to the bot.');
@@ -208,7 +259,10 @@ client.on('interactionCreate', async interaction => {
 
     if (interaction.commandName === 'testalert') {
       await interaction.deferReply({ ephemeral: true });
-      await sendAlert({ domain: 'example.com', hostnames: ['test.example.com'] });
+      await sendAlert({
+        domain: 'example.com',
+        hostnames: ['test.example.com']
+      });
       return interaction.editReply('Test alert sent.');
     }
 
@@ -218,11 +272,15 @@ client.on('interactionCreate', async interaction => {
 
       if (requested) {
         const domain = normalizeDomain(requested);
-        if (!getDomain(domain)) return interaction.editReply('That domain is not monitored.');
+
+        if (!getDomain(domain)) {
+          return interaction.editReply('That domain is not monitored.');
+        }
 
         const result = await scanDomain(domain, notify);
         return interaction.editReply(
-          'Scanned **' + domain + '**: ' + result.total + ' observed, ' + result.fresh.length + ' new.'
+          'Scanned **' + domain + '**: ' + result.total +
+          ' observed, ' + result.fresh.length + ' new.'
         );
       }
 
@@ -235,7 +293,10 @@ client.on('interactionCreate', async interaction => {
     if (interaction.deferred || interaction.replied) {
       await interaction.editReply('Error: ' + error.message);
     } else {
-      await interaction.reply({ content: 'Error: ' + error.message, ephemeral: true });
+      await interaction.reply({
+        content: 'Error: ' + error.message,
+        ephemeral: true
+      });
     }
   }
 });
