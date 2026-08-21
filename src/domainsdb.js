@@ -1,17 +1,17 @@
 const apiKey = process.env.DOMAINSDB_API_KEY;
 
-if (!apiKey) {
-  throw new Error('DOMAINSDB_API_KEY is required');
-}
-
 export async function searchDotdb(keyword) {
   const url = new URL(
     'https://api.domainsdb.info/v1/domains/search'
   );
 
-  url.searchParams.set('api_key', apiKey);
   url.searchParams.set('domain', keyword);
   url.searchParams.set('limit', '100');
+  url.searchParams.set('isDead', 'false');
+
+  if (apiKey) {
+    url.searchParams.set('api_key', apiKey);
+  }
 
   const response = await fetch(url, {
     headers: {
@@ -27,24 +27,24 @@ export async function searchDotdb(keyword) {
     );
   }
 
-  let result;
+  let data;
 
   try {
-    result = JSON.parse(text);
+    data = JSON.parse(text);
   } catch {
     throw new Error('DomainsDB returned invalid JSON');
   }
 
-  const domains = Array.isArray(result.domains)
-    ? result.domains
+  const domains = Array.isArray(data.domains)
+    ? data.domains
     : [];
 
   return domains
     .map(item => {
       if (typeof item === 'string') return item;
-      return item.domain || item.name || '';
+      return item.domain || '';
     })
-    .filter(domain => domain.includes('.'))
+    .filter(Boolean)
     .map(domain => domain.toLowerCase())
     .filter((domain, index, all) => all.indexOf(domain) === index)
     .sort();
