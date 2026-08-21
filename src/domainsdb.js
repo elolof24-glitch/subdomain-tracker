@@ -9,13 +9,13 @@ export async function searchDotdb(keyword) {
     'https://api.domainsdb.info/v1/domains/search'
   );
 
+  url.searchParams.set('api_key', apiKey);
   url.searchParams.set('domain', keyword);
   url.searchParams.set('limit', '100');
 
   const response = await fetch(url, {
     headers: {
-      accept: 'application/json',
-      authorization: `Bearer ${apiKey}`
+      accept: 'application/json'
     }
   });
 
@@ -23,11 +23,17 @@ export async function searchDotdb(keyword) {
 
   if (!response.ok) {
     throw new Error(
-      `DomainsDB error: ${response.status} — ${text.slice(0, 200)}`
+      `DomainsDB error: ${response.status} — ${text.slice(0, 300)}`
     );
   }
 
-  const result = JSON.parse(text);
+  let result;
+
+  try {
+    result = JSON.parse(text);
+  } catch {
+    throw new Error('DomainsDB returned invalid JSON');
+  }
 
   const domains = Array.isArray(result.domains)
     ? result.domains
