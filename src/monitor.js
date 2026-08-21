@@ -3,10 +3,13 @@ import { getObserved, saveObserved, setLastScan } from './store.js';
 const userAgent = process.env.USER_AGENT || 'subdomain-tracker/1.0';
 const requestTimeoutMs = Math.max(
   10000,
-  Number(process.env.CT_REQUEST_TIMEOUT_MS || 30000)
+  Number(process.env.SUBDOMAIN_REQUEST_TIMEOUT_MS || 30000)
 );
-const maxAttempts = Math.max(1, Number(process.env.CT_MAX_ATTEMPTS || 3));
-const retryBaseMs = Math.max(2000, Number(process.env.CT_RETRY_BASE_MS || 5000));
+const c99ApiKey = String(process.env.C99_API_KEY || '').trim();
+
+if (!c99ApiKey) {
+  throw new Error('C99_API_KEY is required');
+}
 
 export function normalizeDomain(value) {
   if (typeof value !== 'string') {
@@ -29,128 +32,106 @@ export function normalizeDomain(value) {
   return domain;
 }
 
-function extractHostnames(rows, domain) {
-  if (!Array.isArray(rows)) {
-    throw new Error('Certificate Transparency returned a non-array response');
-  }
-
-  const normalizedDomain = domain.toLowerCase();
-  const suffix = `.${normalizedDomain}`;
+function extractHostnames(data, domain) {
+  const suffix = `.${domain}`;
   const hostnames = new Set();
 
-  for (const row of rows) {
-    const values = String(row?.name_value || '').split(/[\s,]+/);
+  function add(value) {
+    if (typeof value !== 'string') return;
 
-    for (let hostname of values) {
-      hostname = hostname
-        .toLowerCase()
-        .trim()
-        .replace(/^\*\./, '')
-        .replace(/\.$/, '');
+    const hostname = value
+      .toLowerCase()
+      .trim()
+      .replace(/^https?:\/\//, '')
+      .split('/')[0]
+      .replace(/^\*\./, '')
+      .replace(/\.$/, '');
 
-      if (
-        hostname &&
-        hostname !== normalizedDomain &&
-        hostname.endsWith(suffix) &&
-        !hostname.includes('..')
-      ) {
-        hostnames.add(hostname);
-      }
+    if (
+      hostname &&
+      hostname !== domain &&
+      hostname.endsWith(suffix) &&
+      !hostname.includes('..')
+    ) {
+      hostnames.add(hostname);
     }
   }
+
+  function walk(value) {
+    if (typeof value === 'string') {
+      add(value);
+      return;
+    }
+
+    if (Array.isArray(value)) {
+      value.forEach(walk);
+      return;
+    }
+
+    if (value && typeof value === 'object') {
+      Object.values(value).forEach(walk);
+    }
+  }
+
+  walk(data);
 
   return [...hostnames].sort();
 }
 
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
+async function requestC99(domain) {
+  const url = new URL('https://api.c99.nl/subdomainfinder');
 
-function isRetryableStatus(status) {
-  return [408, 425, 429, 500, 502, 503, 504].includes(status);
-}
+  url.searchParams.set('key', c99ApiKey);
+  url.searchParams.set('domain', domain);
+  url.searchParams.set('json', '');
 
-function retryDelay(attempt, retryAfterHeader) {
-  const retryAfterSeconds = Number(retryAfterHeader);
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(),
+    requestTimeoutMs
+  );
 
-  if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) {
-    return Math.min(retryAfterSeconds * 1000, 60000);
-  }
+  try {
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        accept: 'application/json',
+        'user-agent': userAgent
+      }
+    });
 
-  return Math.min(retryBaseMs * 2 ** (attempt - 1), 60000);
-}
+    const text = await response.text();
 
-async function requestCtJson(url, domain) {
-  let lastError;
-
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
+    if (!response.ok) {
+      throw new Error(
+        `C99 returned HTTP ${response.status}: ${text.slice(0, 300)}`
+      );
+    }
 
     try {
-      const response = await fetch(url, {
-        signal: controller.signal,
-        headers: {
-          'user-agent': userAgent,
-          accept: 'application/json'
-        }
-      });
-
-      const body = await response.text();
-
-      if (response.ok) {
-        try {
-          return JSON.parse(body);
-        } catch {
-          throw new Error(
-            `crt.sh returned invalid JSON: ${body.slice(0, 200)}`
-          );
-        }
-      }
-
-      const error = new Error(
-        `crt.sh returned HTTP ${response.status}: ${body.slice(0, 200)}`
+      return JSON.parse(text);
+    } catch {
+      throw new Error(
+        `C99 returned invalid JSON: ${text.slice(0, 300)}`
       );
-      error.status = response.status;
-      error.retryAfter = response.headers.get('retry-after');
-      throw error;
-    } catch (error) {
-      lastError = error.name === 'AbortError'
-        ? new Error(`request timed out after ${requestTimeoutMs}ms`)
-        : error;
-
-      const status = lastError.status;
-      const retryable = !status || isRetryableStatus(status);
-
-      console.warn(
-        `CT request for ${domain} failed ` +
-        `(attempt ${attempt}/${maxAttempts}): ${lastError.message}`
-      );
-
-      if (!retryable || attempt === maxAttempts) {
-        break;
-      }
-
-      await sleep(retryDelay(attempt, lastError.retryAfter));
-    } finally {
-      clearTimeout(timeout);
     }
-  }
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      throw new Error(
+        `C99 request timed out after ${requestTimeoutMs}ms`
+      );
+    }
 
-  throw new Error(
-    `Certificate Transparency unavailable for ${domain} after ` +
-    `${maxAttempts} attempt(s): ${lastError?.message || 'unknown error'}`
-  );
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 export async function queryCertificateTransparency(domain) {
   domain = normalizeDomain(domain);
-
-  const query = encodeURIComponent(`%.${domain}`);
-  const url = `https://crt.sh/?q=${query}&output=json`;
-  const rows = await requestCtJson(url, domain);
-
-  return extractHostnames(rows, domain);
+  const data = await requestC99(domain);
+  return extractHostnames(data, domain);
 }
 
 export async function scanDomain(domain, notify) {
@@ -164,7 +145,10 @@ export async function scanDomain(domain, notify) {
   setLastScan(domain);
 
   if (fresh.length > 0 && typeof notify === 'function') {
-    await notify({ domain, hostnames: fresh });
+    await notify({
+      domain,
+      hostnames: fresh
+    });
   }
 
   return {
