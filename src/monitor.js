@@ -72,7 +72,11 @@ export async function querySubdomains(domain) {
   }
 }
 
-export async function scanDomain(domain, notify) {
+export async function scanDomain(
+  domain,
+  notify,
+  { notifyOnFresh = true } = {}
+) {
   domain = normalizeDomain(domain);
 
   const hostnames = await querySubdomains(domain);
@@ -82,10 +86,15 @@ export async function scanDomain(domain, notify) {
   saveObserved(domain, hostnames);
   setLastScan(domain);
 
-  if (fresh.length > 0 && typeof notify === 'function') {
+  if (
+    notifyOnFresh &&
+    fresh.length > 0 &&
+    typeof notify === 'function'
+  ) {
     await notify({
       domain,
-      hostnames: fresh
+      hostnames: fresh,
+      reason: 'monitor'
     });
   }
 
