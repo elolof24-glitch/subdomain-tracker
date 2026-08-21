@@ -33,28 +33,58 @@ function extractHostnames(rows, domain) {
   return [...hostnames].sort();
 }
 
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 export async function queryCertificateTransparency(domain) {
   const url = `https://crt.sh/?q=${encodeURIComponent(`%.${domain}`)}&output=json`;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8000);
+  const maxAttempts = 3;
 
-  try {
-    const response = await fetch(url, {
-      signal: controller.signal,
-      headers: {
-        'user-agent': userAgent,
-        accept: 'application/json'
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+
+    try {
+      const response = await fetch(url, {
+        signal: controller.signal,
+        headers: {
+          'user-agent': userAgent,
+          accept: 'application/json'
+        }
+      });
+
+      if (response.ok) {
+        return extractHostnames(await response.json(), domain);
       }
-    });
 
-    if (!response.ok) {
-      throw new Error(`crt.sh returned HTTP ${response.status}`);
+      const retryable = [429, 500, 502, 503, 504].includes(response.status);
+
+      if (!retryable) {
+        throw new Error(`crt.sh returned HTTP ${response.status}`);
+      }
+
+      console.warn(
+        `crt.sh returned HTTP ${response.status} for ${domain}; attempt ${attempt}/${maxAttempts}`
+      );
+    } catch (error) {
+      if (attempt === maxAttempts) {
+        throw new Error(
+          `Certificate Transparency unavailable after ${maxAttempts} attempts: ${error.message}`
+        );
+      }
+
+      console.warn(
+        `crt.sh request failed for ${domain}; attempt ${attempt}/${maxAttempts}: ${error.message}`
+      );
+    } finally {
+      clearTimeout(timeout);
     }
 
-    return extractHostnames(await response.json(), domain);
-  } finally {
-    clearTimeout(timeout);
+    await sleep(attempt * 3000);
   }
+
+  throw new Error('Certificate Transparency request failed');
 }
 
 export async function scanDomain(domain, notify) {
