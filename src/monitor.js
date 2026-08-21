@@ -6,9 +6,9 @@ export function normalizeDomain(value) {
   return value
     .toLowerCase()
     .trim()
-    .replace(/^https?:\\/\\//, '')
+    .replace(/^https?:\/\//, '')
     .split('/')[0]
-    .replace(/\\.$/, '');
+    .replace(/\.$/, '');
 }
 
 function extractHostnames(rows, domain) {
@@ -16,13 +16,13 @@ function extractHostnames(rows, domain) {
   const hostnames = new Set();
 
   for (const row of rows) {
-    const values = String(row.name_value || '').split(/\\s+/);
+    const values = String(row.name_value || '').split(/\s+/);
 
     for (let hostname of values) {
       hostname = hostname
         .toLowerCase()
-        .replace(/^\\*\\./, '')
-        .replace(/\\.$/, '');
+        .replace(/^\*\./, '')
+        .replace(/\.$/, '');
 
       if (hostname !== domain && hostname.endsWith(suffix)) {
         hostnames.add(hostname);
