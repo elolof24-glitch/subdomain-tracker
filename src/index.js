@@ -82,7 +82,7 @@ const commands = [
 ].map(command => command.toJSON());
 
 function validWebhook(url) {
-  return /^https:\/\/discord(?:app)?\.com\/api\/webhooks\/\d+\/[^\s]+$/i.test(url);
+  return /^https:\/\/discord(?:app)?\.com\/api\/webhooks\/\d+\/\S+$/i.test(url);
 }
 
 function validDomain(domain) {
@@ -117,7 +117,10 @@ function alertEmbed(domain, hostnames) {
     .setDescription(`New subdomains observed for **${domain}**.`)
     .addFields({
       name: 'Hostnames',
-      value: hostnames.slice(0, 25).map(hostname => `\`${hostname}\``).join('\n')
+      value: hostnames
+        .slice(0, 25)
+        .map(hostname => `\`${hostname}\``)
+        .join('\n')
     })
     .setFooter({ text: 'Subdomain Tracker • Certificate Transparency' })
     .setTimestamp();
@@ -164,28 +167,44 @@ client.on('interactionCreate', async interaction => {
       const webhook = interaction.options.getString('webhook');
 
       if (!validDomain(domain)) {
-        return interaction.reply({ content: 'Use a domain such as `pump.fun`.', ephemeral: true });
+        return interaction.reply({
+          content: 'Use a domain such as `pump.fun`.',
+          ephemeral: true
+        });
       }
 
       if (webhook && !validWebhook(webhook)) {
-        return interaction.reply({ content: 'That webhook URL is invalid.', ephemeral: true });
+        return interaction.reply({
+          content: 'That webhook URL is invalid.',
+          ephemeral: true
+        });
       }
 
       addDomain(domain, webhook || null);
-      return interaction.reply(`Monitoring **${domain}**. Run \`/scan domain:${domain}\` for the baseline.`);
+      return interaction.reply(
+        `Monitoring **${domain}**. Run \`/scan domain:${domain}\` for the baseline.`
+      );
     }
 
     if (interaction.commandName === 'remove') {
       const domain = normalizeDomain(interaction.options.getString('domain'));
       const result = removeDomain(domain);
-      return interaction.reply(result.changes ? `Stopped monitoring **${domain}**.` : `**${domain}** was not monitored.`);
+      return interaction.reply(
+        result.changes
+          ? `Stopped monitoring **${domain}**.`
+          : `**${domain}** was not monitored.`
+      );
     }
 
     if (interaction.commandName === 'list') {
       const domains = listDomains();
-      return interaction.reply(domains.length
-        ? domains.map(item => `• **${item.domain}** — last scan: ${item.last_scan || 'never'}`).join('\n')
-        : 'No domains are monitored.');
+      return interaction.reply(
+        domains.length
+          ? domains.map(item =>
+              `• **${item.domain}** — last scan: ${item.last_scan || 'never'}`
+            ).join('\n')
+          : 'No domains are monitored.'
+      );
     }
 
     if (interaction.commandName === 'webhook') {
@@ -193,10 +212,17 @@ client.on('interactionCreate', async interaction => {
       const url = interaction.options.getString('url');
 
       if (!getDomain(domain)) {
-        return interaction.reply({ content: 'Use `/add` for this domain first.', ephemeral: true });
+        return interaction.reply({
+          content: 'Use `/add` for this domain first.',
+          ephemeral: true
+        });
       }
+
       if (!validWebhook(url)) {
-        return interaction.reply({ content: 'That webhook URL is invalid.', ephemeral: true });
+        return interaction.reply({
+          content: 'That webhook URL is invalid.',
+          ephemeral: true
+        });
       }
 
       addDomain(domain, url);
@@ -208,7 +234,10 @@ client.on('interactionCreate', async interaction => {
       const monitored = getDomain(domain);
 
       if (!monitored?.webhook) {
-        return interaction.reply({ content: 'No webhook configured for that domain.', ephemeral: true });
+        return interaction.reply({
+          content: 'No webhook configured for that domain.',
+          ephemeral: true
+        });
       }
 
       await postWebhook(monitored.webhook, {
@@ -216,7 +245,10 @@ client.on('interactionCreate', async interaction => {
         embeds: [alertEmbed(domain, [`test.${domain}`]).toJSON()]
       });
 
-      return interaction.reply({ content: `Test sent for **${domain}**.`, ephemeral: true });
+      return interaction.reply({
+        content: `Test sent for **${domain}**.`,
+        ephemeral: true
+      });
     }
 
     if (interaction.commandName === 'scan') {
@@ -225,9 +257,15 @@ client.on('interactionCreate', async interaction => {
 
       if (requested) {
         const domain = normalizeDomain(requested);
-        if (!getDomain(domain)) return interaction.editReply('That domain is not monitored.');
+
+        if (!getDomain(domain)) {
+          return interaction.editReply('That domain is not monitored.');
+        }
+
         const result = await scanDomain(domain, notify);
-        return interaction.editReply(`Scanned **${domain}**: ${result.total} observed, ${result.fresh.length} new.`);
+        return interaction.editReply(
+          `Scanned **${domain}**: ${result.total} observed, ${result.fresh.length} new.`
+        );
       }
 
       await scanAllDomains();
@@ -235,10 +273,14 @@ client.on('interactionCreate', async interaction => {
     }
   } catch (error) {
     console.error(error);
+
     if (interaction.deferred || interaction.replied) {
       await interaction.editReply(`Error: ${error.message}`);
     } else {
-      await interaction.reply({ content: `Error: ${error.message}`, ephemeral: true });
+      await interaction.reply({
+        content: `Error: ${error.message}`,
+        ephemeral: true
+      });
     }
   }
 });
