@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import {
+  AttachmentBuilder,
   ChannelType,
   Client,
   EmbedBuilder,
@@ -45,24 +46,52 @@ function validDomain(domain) {
   return typeof domain === 'string' && domain.includes('.') && !domain.includes(' ');
 }
 
+function hostnameFile(domain, hostnames) {
+  const header = [
+    `Subdomain scan for ${domain}`,
+    `Generated: ${new Date().toISOString()}`,
+    `Total hostnames: ${hostnames.length}`,
+    '',
+    'Hostnames:',
+    ''
+  ].join('\n');
+
+  return Buffer.from(
+    `${header}${hostnames.join('\n')}\n`,
+    'utf8'
+  );
+}
+
 async function registerCommands() {
   const rest = new REST({ version: '10' }).setToken(token);
   await rest.put(Routes.applicationGuildCommands(clientId, guildId), { body: commands });
 }
 
-function alertEmbed(domain, hostnames) {
-  const formattedHostnames = hostnames.slice(0, 25).map(hostname => `\`${hostname}\``).join('\n');
+function splitHostnames(hostnames, maxLength = 1000) {
+  const chunks = [];
+  let current = '';
 
-  return new EmbedBuilder()
+  for (const hostname of hostnames) {
+    const line = `\`${hostname}\`\n`;
+    if (current.length + line.length > maxLength && current) {
+      chunks.push(current.trimEnd());
+      current = '';
+    }
+    current += line;
+  }
+
+  if (current) chunks.push(current.trimEnd());
+  return chunks;
+}
+
+function alertEmbeds(domain, hostnames) {
+  return splitHostnames(hostnames).map((chunk, index) => new EmbedBuilder()
     .setColor(0x20e0a0)
-    .setTitle('🔔 New subdomains found')
-    .setDescription(`Monitoring scan detected new hostnames for **${domain}**.`)
-    .addFields({
-      name: 'Hostnames',
-      value: formattedHostnames || 'No hostname details available.'
-    })
+    .setTitle(index === 0 ? '🔔 New subdomains found' : '🔔 New subdomains found — continued')
+    .setDescription(index === 0 ? `Monitoring scan detected new hostnames for **${domain}**.` : `Additional hostnames detected for **${domain}**.`)
+    .addFields({ name: 'Hostnames', value: chunk })
     .setFooter({ text: 'cnig69' })
-    .setTimestamp();
+    .setTimestamp());
 }
 
 function roleMention() {
@@ -89,11 +118,17 @@ async function getAlertChannel() {
 
 async function sendAlert({ domain, hostnames }) {
   const channel = await getAlertChannel();
-  await channel.send({
-    content: roleMention(),
-    embeds: [alertEmbed(domain, hostnames)],
-    allowedMentions: { roles: alertRoleId ? [alertRoleId] : [] }
-  });
+  const embeds = alertEmbeds(domain, hostnames);
+
+  for (let index = 0; index < embeds.length; index += 10) {
+    await channel.send({
+      content: index === 0 ? roleMention() : '',
+      embeds: embeds.slice(index, index + 10),
+      allowedMentions: {
+        roles: index === 0 && alertRoleId ? [alertRoleId] : []
+      }
+    });
+  }
 }
 
 async function notify({ domain, hostnames }) {
@@ -147,7 +182,14 @@ client.on('interactionCreate', async interaction => {
     if (interaction.commandName === 'list') {
       const domains = listDomains();
       return interaction.reply({
-        content: domains.length ? domains.map(item => `• **${item.domain}** — last scan: ${item.last_scan || 'never'}`).join('\n') : 'No domains are monitored.',
+        content: domains.length
+          ? domains.map(item => {
+              const lastScan = item.last_scan
+                ? `<t:${Math.floor(new Date(item.last_scan).getTime() / 1000)}:f>`
+                : 'never';
+              return `• **${item.domain}** — last scan: ${lastScan}`;
+            }).join('\n')
+          : 'No domains are monitored.',
         ephemeral: true
       });
     }
@@ -169,9 +211,7 @@ client.on('interactionCreate', async interaction => {
     if (interaction.commandName === 'find') {
       await interaction.deferReply({ ephemeral: true });
       const keyword = interaction.options.getString('keyword').trim().toLowerCase();
-      if (!/^[a-z0-9-]{1,63}$/.test(keyword)) {
-        return interaction.editReply('Use a keyword containing only letters, numbers, or hyphens.');
-      }
+      if (!/^[a-z0-9-]{1,63}$/.test(keyword)) return interaction.editReply('Use a keyword containing only letters, numbers, or hyphens.');
       const domains = await searchDotdb(keyword);
       const results = domains.slice(0, 90);
       return interaction.editReply(results.length ? `**Registered domains containing \`${keyword}\`:**\n\n${results.map(domain => `\`${domain}\``).join('\n')}` : `No registered domains found for \`${keyword}\`.`);
@@ -186,24 +226,41 @@ client.on('interactionCreate', async interaction => {
         if (!getDomain(domain)) return interaction.editReply('That domain is not monitored.');
 
         const result = await scanDomain(domain, null, { notifyOnFresh: false });
-        return interaction.editReply([
-          `Scan complete for **${domain}**.`,
-          `Found ${result.total} subdomain(s).`,
-          result.fresh.length > 0 ? `${result.fresh.length} hostname(s) were new to the tracker.` : 'No new hostnames since the previous scan.'
-        ].join('\n'));
+        const file = new AttachmentBuilder(
+          hostnameFile(domain, result.hostnames),
+          { name: `${domain}-subdomains.txt` }
+        );
+
+        return interaction.editReply({
+          content: [
+            `Scan complete for **${domain}**.`,
+            `Found ${result.total} subdomain(s).`,
+            result.fresh.length > 0
+              ? `${result.fresh.length} hostname(s) were new to the tracker.`
+              : 'No new hostnames since the previous scan.',
+            'The complete hostname list is attached below.'
+          ].join('\n'),
+          files: [file]
+        });
       }
 
       const results = [];
+      const files = [];
+
       for (const monitored of listDomains()) {
         try {
           const result = await scanDomain(monitored.domain, null, { notifyOnFresh: false });
           results.push(`• **${result.domain}** — ${result.total} observed, ${result.fresh.length} new to the tracker`);
+          files.push(new AttachmentBuilder(hostnameFile(result.domain, result.hostnames), { name: `${result.domain}-subdomains.txt` }));
         } catch (error) {
           results.push(`• **${monitored.domain}** — error: ${error.message}`);
         }
       }
 
-      return interaction.editReply(results.length ? `Manual scan complete.\n${results.join('\n')}` : 'No domains are monitored.');
+      return interaction.editReply({
+        content: results.length ? `Manual scan complete.\n${results.join('\n')}` : 'No domains are monitored.',
+        files
+      });
     }
   } catch (error) {
     console.error(error);
