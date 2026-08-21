@@ -4,7 +4,21 @@ if (!apiKey) {
   throw new Error('WHOISFREAKS_API_KEY is required');
 }
 
-export async function searchDotdb(keyword) {
+const blockedTlds = new Set([
+  'se',
+  'ru',
+  'email',
+  'club',
+  'online',
+  'video',
+  'tech',
+  'info',
+  'shop',
+  'ltd',
+  'space'
+]);
+
+async function fetchPage(keyword, page) {
   const url = new URL(
     'https://api.whoisfreaks.com/v1.0/whois'
   );
@@ -13,7 +27,7 @@ export async function searchDotdb(keyword) {
   url.searchParams.set('whois', 'reverse');
   url.searchParams.set('keyword', keyword);
   url.searchParams.set('format', 'json');
-  url.searchParams.set('page', '1');
+  url.searchParams.set('page', String(page));
 
   const response = await fetch(url, {
     headers: {
@@ -29,21 +43,33 @@ export async function searchDotdb(keyword) {
     );
   }
 
-  let data;
+  return JSON.parse(text);
+}
 
-  try {
-    data = JSON.parse(text);
-  } catch {
-    throw new Error('WhoisFreaks returned invalid JSON');
+export async function searchDotdb(keyword) {
+  const allDomains = [];
+  const domainPattern =
+    /(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9-]{2,59})/gi;
+
+  for (let page = 1; page <= 5; page++) {
+    const data = await fetchPage(keyword, page);
+    const matches = JSON.stringify(data).match(domainPattern) || [];
+
+    allDomains.push(...matches);
+
+    if (matches.length === 0) break;
   }
 
-  const domainPattern = /\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}\b/gi;
-  const matches = JSON.stringify(data).match(domainPattern) || [];
   const wanted = keyword.toLowerCase();
 
   return [...new Set(
-    matches
-      .map(domain => domain.toLowerCase().replace(/[),.;:'"\]}]+$/, ''))
+    allDomains
+      .map(domain => domain.toLowerCase())
       .filter(domain => domain.includes(wanted))
+      .filter(domain => {
+        const parts = domain.split('.');
+        const tld = parts[parts.length - 1];
+        return !blockedTlds.has(tld);
+      })
   )].sort();
 }
