@@ -34,12 +34,12 @@ export function normalizeDomain(value) {
 
 function extractHostnames(data, domain) {
   const suffix = `.${domain}`;
-  const hostnames = new Set();
+  const found = new Set();
 
   function add(value) {
     if (typeof value !== 'string') return;
 
-    const hostname = value
+    const cleaned = value
       .toLowerCase()
       .trim()
       .replace(/^https?:\/\//, '')
@@ -48,34 +48,41 @@ function extractHostnames(data, domain) {
       .replace(/\.$/, '');
 
     if (
-      hostname &&
-      hostname !== domain &&
-      hostname.endsWith(suffix) &&
-      !hostname.includes('..')
+      cleaned &&
+      cleaned !== domain &&
+      cleaned.endsWith(suffix) &&
+      !cleaned.includes('..')
     ) {
-      hostnames.add(hostname);
+      found.add(cleaned);
     }
   }
 
-  function walk(value) {
+  function walk(value, key = '') {
     if (typeof value === 'string') {
-      add(value);
+      if (
+        /subdomain|hostname|host|domain/i.test(key) ||
+        value.toLowerCase().endsWith(suffix)
+      ) {
+        add(value);
+      }
       return;
     }
 
     if (Array.isArray(value)) {
-      value.forEach(walk);
+      value.forEach(item => walk(item, key));
       return;
     }
 
     if (value && typeof value === 'object') {
-      Object.values(value).forEach(walk);
+      for (const [childKey, childValue] of Object.entries(value)) {
+        walk(childValue, childKey);
+      }
     }
   }
 
   walk(data);
 
-  return [...hostnames].sort();
+  return [...found].sort();
 }
 
 async function requestC99(domain) {
@@ -95,7 +102,7 @@ async function requestC99(domain) {
     const response = await fetch(url, {
       signal: controller.signal,
       headers: {
-        accept: 'application/json',
+        accept: 'application/json, text/plain',
         'user-agent': userAgent
       }
     });
@@ -111,9 +118,7 @@ async function requestC99(domain) {
     try {
       return JSON.parse(text);
     } catch {
-      throw new Error(
-        `C99 returned invalid JSON: ${text.slice(0, 300)}`
-      );
+      return text;
     }
   } catch (error) {
     if (error.name === 'AbortError') {
@@ -128,16 +133,28 @@ async function requestC99(domain) {
   }
 }
 
-export async function queryCertificateTransparency(domain) {
+export async function querySubdomains(domain) {
   domain = normalizeDomain(domain);
+
   const data = await requestC99(domain);
-  return extractHostnames(data, domain);
+  const hostnames = extractHostnames(data, domain);
+
+  if (hostnames.length === 0) {
+    console.warn(
+      `C99 returned no matching hostnames for ${domain}:`,
+      typeof data === 'string'
+        ? data.slice(0, 500)
+        : JSON.stringify(data).slice(0, 500)
+    );
+  }
+
+  return hostnames;
 }
 
 export async function scanDomain(domain, notify) {
   domain = normalizeDomain(domain);
 
-  const hostnames = await queryCertificateTransparency(domain);
+  const hostnames = await querySubdomains(domain);
   const observed = getObserved(domain);
   const fresh = hostnames.filter(hostname => !observed.has(hostname));
 
