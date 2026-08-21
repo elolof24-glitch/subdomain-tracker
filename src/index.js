@@ -87,8 +87,8 @@ async function registerCommands() {
 function alertEmbed(domain, hostnames) {
   const formattedHostnames = hostnames
     .slice(0, 25)
-    .map(hostname => `\\`${hostname}\\``)
-    .join('\\n');
+    .map(hostname => `\`${hostname}\``)
+    .join('\n');
 
   return new EmbedBuilder()
     .setColor(0x20e0a0)
@@ -166,7 +166,7 @@ client.on('interactionCreate', async interaction => {
 
       addDomain(domain);
       return interaction.reply(
-        `Monitoring **${domain}**. Run \\`/scan domain:${domain}\\` for the baseline.`
+        `Monitoring **${domain}**. Run \`/scan domain:${domain}\` for the baseline.`
       );
     }
 
@@ -188,7 +188,7 @@ client.on('interactionCreate', async interaction => {
         domains.length
           ? domains.map(item =>
               `• **${item.domain}** — last scan: ${item.last_scan || 'never'}`
-            ).join('\\n')
+            ).join('\n')
           : 'No domains are monitored.'
       );
     }
@@ -247,3 +247,4 @@ client.on('interactionCreate', async interaction => {
 });
 
 await client.login(token);
+
