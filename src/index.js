@@ -18,9 +18,15 @@ import { normalizeDomain, scanDomain } from './monitor.js';
 const token = process.env.DISCORD_TOKEN;
 const clientId = process.env.DISCORD_CLIENT_ID;
 const guildId = process.env.DISCORD_GUILD_ID;
+const alertChannelId = process.env.DISCORD_ALERT_CHANNEL_ID;
+const alertRoleId = process.env.DISCORD_ALERT_ROLE_ID;
 
 if (!token || !clientId) {
   throw new Error('DISCORD_TOKEN and DISCORD_CLIENT_ID are required');
+}
+
+if (!alertChannelId) {
+  throw new Error('DISCORD_ALERT_CHANNEL_ID is required');
 }
 
 const client = new Client({
@@ -34,11 +40,7 @@ const commands = [
     .addStringOption(option => option
       .setName('domain')
       .setDescription('Example: pump.fun')
-      .setRequired(true))
-    .addStringOption(option => option
-      .setName('webhook')
-      .setDescription('Discord webhook URL')
-      .setRequired(false)),
+      .setRequired(true)),
 
   new SlashCommandBuilder()
     .setName('remove')
@@ -61,29 +63,13 @@ const commands = [
       .setRequired(false)),
 
   new SlashCommandBuilder()
-    .setName('webhook')
-    .setDescription('Change a domain webhook')
-    .addStringOption(option => option
-      .setName('domain')
-      .setDescription('Example: pump.fun')
-      .setRequired(true))
-    .addStringOption(option => option
-      .setName('url')
-      .setDescription('Discord webhook URL')
-      .setRequired(true)),
+    .setName('testalert')
+    .setDescription('Test the alert channel and role mention'),
 
   new SlashCommandBuilder()
     .setName('testwebhook')
-    .setDescription('Test a domain webhook')
-    .addStringOption(option => option
-      .setName('domain')
-      .setDescription('Monitored domain')
-      .setRequired(true))
+    .setDescription('Legacy webhook test; direct alerts are now used')
 ].map(command => command.toJSON());
-
-function validWebhook(url) {
-  return /^https:\/\/discord(?:app)?\.com\/api\/webhooks\/\d+\/\S+$/i.test(url);
-}
 
 function validDomain(domain) {
   return domain.includes('.') && !domain.includes(' ');
@@ -98,23 +84,11 @@ async function registerCommands() {
   await rest.put(route, { body: commands });
 }
 
-async function postWebhook(url, payload) {
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(payload)
-  });
-
-  if (!response.ok) {
-    throw new Error(`Discord webhook returned HTTP ${response.status}`);
-  }
-}
-
 function alertEmbed(domain, hostnames) {
   const formattedHostnames = hostnames
     .slice(0, 25)
-    .map(hostname => `\`${hostname}\``)
-    .join('\n');
+    .map(hostname => `\\`${hostname}\\``)
+    .join('\\n');
 
   return new EmbedBuilder()
     .setColor(0x20e0a0)
@@ -128,14 +102,28 @@ function alertEmbed(domain, hostnames) {
     .setTimestamp();
 }
 
-async function notify({ domain, hostnames }) {
-  const monitored = getDomain(domain);
-  if (!monitored?.webhook) return;
+function roleMention() {
+  return alertRoleId ? `<@&${alertRoleId}>` : '';
+}
 
-  await postWebhook(monitored.webhook, {
-    username: 'Subdomain Tracker',
-    embeds: [alertEmbed(domain, hostnames).toJSON()]
+async function sendAlert({ domain, hostnames }) {
+  const channel = await client.channels.fetch(alertChannelId);
+
+  if (!channel || !channel.isTextBased()) {
+    throw new Error('Alert channel was not found or is not text-based');
+  }
+
+  await channel.send({
+    content: roleMention(),
+    embeds: [alertEmbed(domain, hostnames)],
+    allowedMentions: {
+      roles: alertRoleId ? [alertRoleId] : []
+    }
   });
+}
+
+async function notify({ domain, hostnames }) {
+  await sendAlert({ domain, hostnames });
 }
 
 async function scanAllDomains() {
@@ -152,6 +140,8 @@ async function scanAllDomains() {
 client.once('ready', async () => {
   await registerCommands();
   console.log(`Logged in as ${client.user.tag}`);
+  console.log(`Alerts channel: ${alertChannelId}`);
+  console.log(`Alerts role: ${alertRoleId || 'none'}`);
 
   await scanAllDomains();
 
@@ -166,7 +156,6 @@ client.on('interactionCreate', async interaction => {
   try {
     if (interaction.commandName === 'add') {
       const domain = normalizeDomain(interaction.options.getString('domain'));
-      const webhook = interaction.options.getString('webhook');
 
       if (!validDomain(domain)) {
         return interaction.reply({
@@ -175,22 +164,16 @@ client.on('interactionCreate', async interaction => {
         });
       }
 
-      if (webhook && !validWebhook(webhook)) {
-        return interaction.reply({
-          content: 'That webhook URL is invalid.',
-          ephemeral: true
-        });
-      }
-
-      addDomain(domain, webhook || null);
+      addDomain(domain);
       return interaction.reply(
-        `Monitoring **${domain}**. Run \`/scan domain:${domain}\` for the baseline.`
+        `Monitoring **${domain}**. Run \\`/scan domain:${domain}\\` for the baseline.`
       );
     }
 
     if (interaction.commandName === 'remove') {
       const domain = normalizeDomain(interaction.options.getString('domain'));
       const result = removeDomain(domain);
+
       return interaction.reply(
         result.changes
           ? `Stopped monitoring **${domain}**.`
@@ -200,55 +183,31 @@ client.on('interactionCreate', async interaction => {
 
     if (interaction.commandName === 'list') {
       const domains = listDomains();
+
       return interaction.reply(
         domains.length
           ? domains.map(item =>
               `• **${item.domain}** — last scan: ${item.last_scan || 'never'}`
-            ).join('\n')
+            ).join('\\n')
           : 'No domains are monitored.'
       );
     }
 
-    if (interaction.commandName === 'webhook') {
-      const domain = normalizeDomain(interaction.options.getString('domain'));
-      const url = interaction.options.getString('url');
-
-      if (!getDomain(domain)) {
-        return interaction.reply({
-          content: 'Use `/add` for this domain first.',
-          ephemeral: true
-        });
-      }
-
-      if (!validWebhook(url)) {
-        return interaction.reply({
-          content: 'That webhook URL is invalid.',
-          ephemeral: true
-        });
-      }
-
-      addDomain(domain, url);
-      return interaction.reply(`Webhook updated for **${domain}**.`);
-    }
-
-    if (interaction.commandName === 'testwebhook') {
-      const domain = normalizeDomain(interaction.options.getString('domain'));
-      const monitored = getDomain(domain);
-
-      if (!monitored?.webhook) {
-        return interaction.reply({
-          content: 'No webhook configured for that domain.',
-          ephemeral: true
-        });
-      }
-
-      await postWebhook(monitored.webhook, {
-        username: 'Subdomain Tracker',
-        embeds: [alertEmbed(domain, [`test.${domain}`]).toJSON()]
+    if (interaction.commandName === 'testalert') {
+      await sendAlert({
+        domain: 'example.com',
+        hostnames: ['test.example.com']
       });
 
       return interaction.reply({
-        content: `Test sent for **${domain}**.`,
+        content: 'Test alert sent.',
+        ephemeral: true
+      });
+    }
+
+    if (interaction.commandName === 'testwebhook') {
+      return interaction.reply({
+        content: 'Direct bot alerts are enabled. Use `/testalert` instead.',
         ephemeral: true
       });
     }
