@@ -2,11 +2,11 @@ import { getObserved, saveObserved, setLastScan } from './store.js';
 
 const userAgent = process.env.USER_AGENT || 'subdomain-tracker/1.0';
 const requestTimeoutMs = Math.max(
-  5000,
-  Number(process.env.CT_REQUEST_TIMEOUT_MS || 15000)
+  10000,
+  Number(process.env.CT_REQUEST_TIMEOUT_MS || 30000)
 );
 const maxAttempts = Math.max(1, Number(process.env.CT_MAX_ATTEMPTS || 3));
-const retryBaseMs = Math.max(1000, Number(process.env.CT_RETRY_BASE_MS || 5000));
+const retryBaseMs = Math.max(2000, Number(process.env.CT_RETRY_BASE_MS || 5000));
 
 export function normalizeDomain(value) {
   if (typeof value !== 'string') {
@@ -34,11 +34,12 @@ function extractHostnames(rows, domain) {
     throw new Error('Certificate Transparency returned a non-array response');
   }
 
-  const suffix = `.${domain}`;
+  const normalizedDomain = domain.toLowerCase();
+  const suffix = `.${normalizedDomain}`;
   const hostnames = new Set();
 
   for (const row of rows) {
-    const values = String(row?.name_value || '').split(/\s+/);
+    const values = String(row?.name_value || '').split(/[\s,]+/);
 
     for (let hostname of values) {
       hostname = hostname
@@ -49,7 +50,7 @@ function extractHostnames(rows, domain) {
 
       if (
         hostname &&
-        hostname !== domain &&
+        hostname !== normalizedDomain &&
         hostname.endsWith(suffix) &&
         !hostname.includes('..')
       ) {
@@ -84,10 +85,7 @@ async function requestCtJson(url, domain) {
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const controller = new AbortController();
-    const timeout = setTimeout(
-      () => controller.abort(),
-      requestTimeoutMs
-    );
+    const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
 
     try {
       const response = await fetch(url, {
@@ -172,6 +170,7 @@ export async function scanDomain(domain, notify) {
   return {
     domain,
     total: hostnames.length,
-    fresh
+    fresh,
+    hostnames
   };
 }
