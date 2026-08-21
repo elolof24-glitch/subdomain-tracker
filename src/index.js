@@ -64,11 +64,7 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName('testalert')
-    .setDescription('Test the alert channel and role mention'),
-
-  new SlashCommandBuilder()
-    .setName('testwebhook')
-    .setDescription('Legacy webhook test; direct alerts are now used')
+    .setDescription('Test the alert channel and role mention')
 ].map(command => command.toJSON());
 
 function validDomain(domain) {
@@ -87,13 +83,13 @@ async function registerCommands() {
 function alertEmbed(domain, hostnames) {
   const formattedHostnames = hostnames
     .slice(0, 25)
-    .map(hostname => `\\`${hostname}\\``)
-    .join('\\n');
+    .map(hostname => '`' + hostname + '`')
+    .join('\n');
 
   return new EmbedBuilder()
     .setColor(0x20e0a0)
     .setTitle('🚨 New Subdomains Added')
-    .setDescription(`New subdomains observed for **${domain}**.`)
+    .setDescription('New subdomains observed for **' + domain + '***.')
     .addFields({
       name: 'Hostnames',
       value: formattedHostnames || 'No hostname details available.'
@@ -103,7 +99,7 @@ function alertEmbed(domain, hostnames) {
 }
 
 function roleMention() {
-  return alertRoleId ? `<@&${alertRoleId}>` : '';
+  return alertRoleId ? '<@&' + alertRoleId + '>' : '';
 }
 
 async function sendAlert({ domain, hostnames }) {
@@ -155,66 +151,64 @@ client.on('interactionCreate', async interaction => {
 
   try {
     if (interaction.commandName === 'add') {
-      const domain = normalizeDomain(interaction.options.getString('domain'));
+      await interaction.deferReply({ ephemeral: true });
+
+      const rawDomain = interaction.options.getString('domain');
+      const domain = normalizeDomain(rawDomain);
 
       if (!validDomain(domain)) {
-        return interaction.reply({
-          content: 'Use a domain such as `pump.fun`.',
-          ephemeral: true
-        });
+        return interaction.editReply('Use a domain such as `pump.fun`.');
       }
 
       addDomain(domain);
-      return interaction.reply(
-        `Monitoring **${domain}**. Run \\`/scan domain:${domain}\\` for the baseline.`
+      return interaction.editReply(
+        'Monitoring **' + domain + '**. Run `/scan domain:' + domain + '` for the baseline.'
       );
     }
 
     if (interaction.commandName === 'remove') {
-      const domain = normalizeDomain(interaction.options.getString('domain'));
+      await interaction.deferReply({ ephemeral: true });
+
+      const domain = normalizeDomain(
+        interaction.options.getString('domain')
+      );
       const result = removeDomain(domain);
 
-      return interaction.reply(
+      return interaction.editReply(
         result.changes
-          ? `Stopped monitoring **${domain}**.`
-          : `**${domain}** was not monitored.`
+          ? 'Stopped monitoring **' + domain + '**.'
+          : '**' + domain + '** was not monitored.'
       );
     }
 
     if (interaction.commandName === 'list') {
       const domains = listDomains();
 
-      return interaction.reply(
-        domains.length
+      return interaction.reply({
+        content: domains.length
           ? domains.map(item =>
-              `• **${item.domain}** — last scan: ${item.last_scan || 'never'}`
-            ).join('\\n')
-          : 'No domains are monitored.'
-      );
+              '• **' + item.domain + '** — last scan: ' + (item.last_scan || 'never')
+            ).join('\n')
+          : 'No domains are monitored.',
+        ephemeral: true
+      });
     }
 
     if (interaction.commandName === 'testalert') {
+      await interaction.deferReply({ ephemeral: true });
+
       await sendAlert({
         domain: 'example.com',
         hostnames: ['test.example.com']
       });
 
-      return interaction.reply({
-        content: 'Test alert sent.',
-        ephemeral: true
-      });
-    }
-
-    if (interaction.commandName === 'testwebhook') {
-      return interaction.reply({
-        content: 'Direct bot alerts are enabled. Use `/testalert` instead.',
-        ephemeral: true
-      });
+      return interaction.editReply('Test alert sent.');
     }
 
     if (interaction.commandName === 'scan') {
-      const requested = interaction.options.getString('domain');
       await interaction.deferReply({ ephemeral: true });
+
+      const requested = interaction.options.getString('domain');
 
       if (requested) {
         const domain = normalizeDomain(requested);
@@ -225,7 +219,7 @@ client.on('interactionCreate', async interaction => {
 
         const result = await scanDomain(domain, notify);
         return interaction.editReply(
-          `Scanned **${domain}**: ${result.total} observed, ${result.fresh.length} new.`
+          'Scanned **' + domain + '**: ' + result.total + ' observed, ' + result.fresh.length + ' new.'
         );
       }
 
@@ -236,10 +230,10 @@ client.on('interactionCreate', async interaction => {
     console.error(error);
 
     if (interaction.deferred || interaction.replied) {
-      await interaction.editReply(`Error: ${error.message}`);
+      await interaction.editReply('Error: ' + error.message);
     } else {
       await interaction.reply({
-        content: `Error: ${error.message}`,
+        content: 'Error: ' + error.message,
         ephemeral: true
       });
     }
