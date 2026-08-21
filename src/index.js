@@ -1,8 +1,10 @@
 import 'dotenv/config';
 import {
+  ChannelType,
   Client,
   EmbedBuilder,
   GatewayIntentBits,
+  PermissionFlagsBits,
   REST,
   Routes,
   SlashCommandBuilder
@@ -23,6 +25,10 @@ const alertRoleId = process.env.DISCORD_ALERT_ROLE_ID;
 
 if (!token || !clientId) {
   throw new Error('DISCORD_TOKEN and DISCORD_CLIENT_ID are required');
+}
+
+if (!guildId) {
+  throw new Error('DISCORD_GUILD_ID is required');
 }
 
 if (!alertChannelId) {
@@ -68,16 +74,15 @@ const commands = [
 ].map(command => command.toJSON());
 
 function validDomain(domain) {
-  return domain.includes('.') && !domain.includes(' ');
+  return typeof domain === 'string' && domain.includes('.') && !domain.includes(' ');
 }
 
 async function registerCommands() {
   const rest = new REST({ version: '10' }).setToken(token);
-  const route = guildId
-    ? Routes.applicationGuildCommands(clientId, guildId)
-    : Routes.applicationCommands(clientId);
-
-  await rest.put(route, { body: commands });
+  await rest.put(
+    Routes.applicationGuildCommands(clientId, guildId),
+    { body: commands }
+  );
 }
 
 function alertEmbed(domain, hostnames) {
@@ -89,7 +94,7 @@ function alertEmbed(domain, hostnames) {
   return new EmbedBuilder()
     .setColor(0x20e0a0)
     .setTitle('🚨 New Subdomains Added')
-    .setDescription('New subdomains observed for **' + domain + '***.')
+    .setDescription('New subdomains observed for **' + domain + '**.')
     .addFields({
       name: 'Hostnames',
       value: formattedHostnames || 'No hostname details available.'
@@ -102,12 +107,44 @@ function roleMention() {
   return alertRoleId ? '<@&' + alertRoleId + '>' : '';
 }
 
-async function sendAlert({ domain, hostnames }) {
-  const channel = await client.channels.fetch(alertChannelId);
+async function getAlertChannel() {
+  const guild = await client.guilds.fetch(guildId);
+  const channel = await guild.channels.fetch(alertChannelId);
 
-  if (!channel || !channel.isTextBased()) {
-    throw new Error('Alert channel was not found or is not text-based');
+  if (!channel) {
+    throw new Error(
+      'Alert channel ' + alertChannelId + ' was not found in server ' + guildId
+    );
   }
+
+  if (
+    channel.type !== ChannelType.GuildText &&
+    channel.type !== ChannelType.GuildAnnouncement
+  ) {
+    throw new Error(
+      'Alert channel must be a normal text or announcement channel'
+    );
+  }
+
+  const permissions = channel.permissionsFor(client.user);
+
+  if (!permissions?.has(PermissionFlagsBits.ViewChannel)) {
+    throw new Error('Bot lacks View Channel permission in the alert channel');
+  }
+
+  if (!permissions.has(PermissionFlagsBits.SendMessages)) {
+    throw new Error('Bot lacks Send Messages permission in the alert channel');
+  }
+
+  if (!permissions.has(PermissionFlagsBits.EmbedLinks)) {
+    throw new Error('Bot lacks Embed Links permission in the alert channel');
+  }
+
+  return channel;
+}
+
+async function sendAlert({ domain, hostnames }) {
+  const channel = await getAlertChannel();
 
   await channel.send({
     content: roleMention(),
@@ -126,23 +163,29 @@ async function scanAllDomains() {
   for (const monitored of listDomains()) {
     try {
       const result = await scanDomain(monitored.domain, notify);
-      console.log(`${result.domain}: ${result.fresh.length} new hostname(s)`);
+      console.log(
+        result.domain + ': ' + result.fresh.length + ' new hostname(s)'
+      );
     } catch (error) {
-      console.error(`Scan failed for ${monitored.domain}:`, error.message);
+      console.error(
+        'Scan failed for ' + monitored.domain + ':',
+        error.message
+      );
     }
   }
 }
 
 client.once('ready', async () => {
   await registerCommands();
-  console.log(`Logged in as ${client.user.tag}`);
-  console.log(`Alerts channel: ${alertChannelId}`);
-  console.log(`Alerts role: ${alertRoleId || 'none'}`);
+  console.log('Logged in as ' + client.user.tag);
+  console.log('Guild: ' + guildId);
+  console.log('Alerts channel: ' + alertChannelId);
+  console.log('Alerts role: ' + (alertRoleId || 'none'));
 
   await scanAllDomains();
 
   const seconds = Math.max(10, Number(process.env.POLL_SECONDS || 60));
-  console.log(`Polling every ${seconds} seconds.`);
+  console.log('Polling every ' + seconds + ' seconds.');
   setInterval(scanAllDomains, seconds * 1000);
 });
 
@@ -153,8 +196,9 @@ client.on('interactionCreate', async interaction => {
     if (interaction.commandName === 'add') {
       await interaction.deferReply({ ephemeral: true });
 
-      const rawDomain = interaction.options.getString('domain');
-      const domain = normalizeDomain(rawDomain);
+      const domain = normalizeDomain(
+        interaction.options.getString('domain')
+      );
 
       if (!validDomain(domain)) {
         return interaction.editReply('Use a domain such as `pump.fun`.');
@@ -187,7 +231,8 @@ client.on('interactionCreate', async interaction => {
       return interaction.reply({
         content: domains.length
           ? domains.map(item =>
-              '• **' + item.domain + '** — last scan: ' + (item.last_scan || 'never')
+              '• **' + item.domain + '** — last scan: ' +
+              (item.last_scan || 'never')
             ).join('\n')
           : 'No domains are monitored.',
         ephemeral: true
@@ -219,7 +264,8 @@ client.on('interactionCreate', async interaction => {
 
         const result = await scanDomain(domain, notify);
         return interaction.editReply(
-          'Scanned **' + domain + '**: ' + result.total + ' observed, ' + result.fresh.length + ' new.'
+          'Scanned **' + domain + '**: ' + result.total +
+          ' observed, ' + result.fresh.length + ' new.'
         );
       }
 
