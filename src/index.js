@@ -82,7 +82,7 @@ const commands = [
 ].map(command => command.toJSON());
 
 function validWebhook(url) {
-  return /^https:\\/\\/discord(?:app)?\\.com\\/api\\/webhooks\\/\\d+\\/[^\\s]+$/i.test(url);
+  return /^https:\/\/discord(?:app)?\.com\/api\/webhooks\/\d+\/[^\s]+$/i.test(url);
 }
 
 function validDomain(domain) {
@@ -117,7 +117,7 @@ function alertEmbed(domain, hostnames) {
     .setDescription(`New subdomains observed for **${domain}**.`)
     .addFields({
       name: 'Hostnames',
-      value: hostnames.slice(0, 25).map(hostname => `\\`${hostname}\\``).join('\\n')
+      value: hostnames.slice(0, 25).map(hostname => `\`${hostname}\``).join('\n')
     })
     .setFooter({ text: 'Subdomain Tracker • Certificate Transparency' })
     .setTimestamp();
@@ -172,7 +172,7 @@ client.on('interactionCreate', async interaction => {
       }
 
       addDomain(domain, webhook || null);
-      return interaction.reply(`Monitoring **${domain}**. Run \\`/scan domain:${domain}\\` for the baseline.`);
+      return interaction.reply(`Monitoring **${domain}**. Run \`/scan domain:${domain}\` for the baseline.`);
     }
 
     if (interaction.commandName === 'remove') {
@@ -184,7 +184,7 @@ client.on('interactionCreate', async interaction => {
     if (interaction.commandName === 'list') {
       const domains = listDomains();
       return interaction.reply(domains.length
-        ? domains.map(item => `• **${item.domain}** — last scan: ${item.last_scan || 'never'}`).join('\\n')
+        ? domains.map(item => `• **${item.domain}** — last scan: ${item.last_scan || 'never'}`).join('\n')
         : 'No domains are monitored.');
     }
 
@@ -244,3 +244,4 @@ client.on('interactionCreate', async interaction => {
 });
 
 await client.login(token);
+
