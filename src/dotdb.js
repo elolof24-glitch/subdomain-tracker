@@ -1,43 +1,24 @@
-const dotdbApiKey = process.env.DOTDB_API_KEY;
+export async function searchDotdb(keyword) {
+  const url = new URL('https://api.dotdb.com/v2/search');
 
-if (!dotdbApiKey) {
-  throw new Error('DOTDB_API_KEY is required for /find');
-}
+  url.searchParams.set('keyword', keyword);
+  url.searchParams.set('position', 'end');
 
-export async function searchDotdb({
-  keyword,
-  position = 'any',
-  includeSuffix = ''
-}) {
-  const params = new URLSearchParams({
-    keyword,
-    position
+  const response = await fetch(url, {
+    headers: {
+      accept: 'application/json',
+      authorization: `Bearer ${process.env.DOTDB_API_KEY}`
+    }
   });
 
-  if (includeSuffix) {
-    params.set('include_suffix', includeSuffix);
-  }
-
-  const response = await fetch(
-    `https://api.dotdb.com/v2/search?${params.toString()}`,
-    {
-      headers: {
-        accept: 'application/json',
-        authorization: `Bearer ${dotdbApiKey}`,
-        'user-agent': 'subdomain-tracker/1.0'
-      }
-    }
-  );
-
-  const body = await response.text();
-
   if (!response.ok) {
-    throw new Error(`DotDB returned HTTP ${response.status}: ${body.slice(0, 200)}`);
+    throw new Error(`DotDB error: ${response.status}`);
   }
 
-  try {
-    return JSON.parse(body);
-  } catch {
-    throw new Error(`DotDB returned invalid JSON: ${body.slice(0, 200)}`);
-  }
+  const result = await response.json();
+
+  const domains = JSON.stringify(result)
+    .match(/[a-z0-9-]+\\.[a-z]{2,}/gi) || [];
+
+  return [...new Set(domains)].sort();
 }
