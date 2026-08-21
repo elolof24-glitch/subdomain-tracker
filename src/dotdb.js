@@ -1,24 +1,45 @@
-export async function searchDotdb(keyword) {
-  const url = new URL('https://api.dotdb.com/v2/search');
+const apiKey = process.env.DOMAINSDB_API_KEY;
 
-  url.searchParams.set('keyword', keyword);
-  url.searchParams.set('position', 'end');
+if (!apiKey) {
+  throw new Error('DOMAINSDB_API_KEY is required');
+}
+
+export async function searchDotdb(keyword) {
+  const url = new URL(
+    'https://api.domainsdb.info/v1/domains/search'
+  );
+
+  url.searchParams.set('domain', keyword);
+  url.searchParams.set('limit', '100');
 
   const response = await fetch(url, {
     headers: {
       accept: 'application/json',
-      authorization: `Bearer ${process.env.DOTDB_API_KEY}`
+      authorization: `Bearer ${apiKey}`
     }
   });
 
+  const text = await response.text();
+
   if (!response.ok) {
-    throw new Error(`DotDB error: ${response.status}`);
+    throw new Error(
+      `DomainsDB error: ${response.status} — ${text.slice(0, 200)}`
+    );
   }
 
-  const result = await response.json();
+  const result = JSON.parse(text);
 
-  const domains = JSON.stringify(result)
-    .match(/[a-z0-9-]+\\.[a-z]{2,}/gi) || [];
+  const domains = Array.isArray(result.domains)
+    ? result.domains
+    : [];
 
-  return [...new Set(domains)].sort();
+  return domains
+    .map(item => {
+      if (typeof item === 'string') return item;
+      return item.domain || item.name || '';
+    })
+    .filter(domain => domain.includes('.'))
+    .map(domain => domain.toLowerCase())
+    .filter((domain, index, all) => all.indexOf(domain) === index)
+    .sort();
 }
