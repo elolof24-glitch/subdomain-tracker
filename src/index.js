@@ -70,7 +70,11 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName('testalert')
-    .setDescription('Test the alert channel and role mention')
+    .setDescription('Test the alert channel and role mention'),
+
+  new SlashCommandBuilder()
+    .setName('debugchannels')
+    .setDescription('List channels visible to the bot')
 ].map(command => command.toJSON());
 
 function validDomain(domain) {
@@ -109,11 +113,18 @@ function roleMention() {
 
 async function getAlertChannel() {
   const guild = await client.guilds.fetch(guildId);
-  const channel = await guild.channels.fetch(alertChannelId);
+  const channels = await guild.channels.fetch();
+  const channel = channels.get(alertChannelId);
 
   if (!channel) {
+    const visibleChannels = [...channels.values()]
+      .filter(Boolean)
+      .map(item => `${item.name || 'unnamed'}=${item.id}`)
+      .join(', ');
+
     throw new Error(
-      'Alert channel ' + alertChannelId + ' was not found in server ' + guildId
+      'Channel ' + alertChannelId + ' was not found in guild ' + guildId +
+      '. Visible channels: ' + visibleChannels
     );
   }
 
@@ -122,7 +133,8 @@ async function getAlertChannel() {
     channel.type !== ChannelType.GuildAnnouncement
   ) {
     throw new Error(
-      'Alert channel must be a normal text or announcement channel'
+      'Alert channel must be a standard text or announcement channel. ' +
+      'Found type ' + channel.type
     );
   }
 
@@ -237,6 +249,21 @@ client.on('interactionCreate', async interaction => {
           : 'No domains are monitored.',
         ephemeral: true
       });
+    }
+
+    if (interaction.commandName === 'debugchannels') {
+      await interaction.deferReply({ ephemeral: true });
+
+      const guild = await client.guilds.fetch(guildId);
+      const channels = await guild.channels.fetch();
+      const result = [...channels.values()]
+        .filter(Boolean)
+        .map(channel => `${channel.name || 'unnamed'} — ${channel.id} — type ${channel.type}`)
+        .join('\n');
+
+      return interaction.editReply(
+        result || 'No channels are visible to the bot.'
+      );
     }
 
     if (interaction.commandName === 'testalert') {
