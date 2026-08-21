@@ -4,11 +4,13 @@ const databasePath = process.env.DATABASE_PATH || '/data/subdomain-tracker.sqlit
 const db = new Database(databasePath);
 
 db.pragma('journal_mode = WAL');
+db.pragma('foreign_keys = ON');
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS domains (
     domain TEXT PRIMARY KEY,
-    last_scan TEXT
+    last_scan TEXT,
+    enabled INTEGER NOT NULL DEFAULT 1
   );
 
   CREATE TABLE IF NOT EXISTS observed_hostnames (
@@ -21,11 +23,22 @@ db.exec(`
   );
 `);
 
+const domainColumns = db.prepare(`PRAGMA table_info(domains)`).all();
+const hasEnabledColumn = domainColumns.some(column => column.name === 'enabled');
+
+if (!hasEnabledColumn) {
+  db.exec(`
+    ALTER TABLE domains
+    ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1
+  `);
+}
+
 const upsertDomain = db.prepare(`
-  INSERT INTO domains (domain, last_scan)
-  VALUES (?, COALESCE(?, NULL))
+  INSERT INTO domains (domain, last_scan, enabled)
+  VALUES (?, ?, 1)
   ON CONFLICT(domain) DO UPDATE SET
-    last_scan = COALESCE(excluded.last_scan, domains.last_scan)
+    last_scan = COALESCE(excluded.last_scan, domains.last_scan),
+    enabled = 1
 `);
 
 export function addDomain(domain) {
@@ -33,15 +46,28 @@ export function addDomain(domain) {
 }
 
 export function getDomain(domain) {
-  return db.prepare('SELECT * FROM domains WHERE domain = ?').get(domain);
+  return db.prepare(`
+    SELECT *
+    FROM domains
+    WHERE domain = ? AND enabled = 1
+  `).get(domain);
 }
 
 export function listDomains() {
-  return db.prepare('SELECT * FROM domains ORDER BY domain').all();
+  return db.prepare(`
+    SELECT domain, last_scan
+    FROM domains
+    WHERE enabled = 1
+    ORDER BY domain
+  `).all();
 }
 
 export function removeDomain(domain) {
-  return db.prepare('DELETE FROM domains WHERE domain = ?').run(domain);
+  return db.prepare(`
+    UPDATE domains
+    SET enabled = 0
+    WHERE domain = ? AND enabled = 1
+  `).run(domain);
 }
 
 export function getObserved(domain) {
@@ -78,6 +104,6 @@ export function setLastScan(domain) {
   db.prepare(`
     UPDATE domains
     SET last_scan = ?
-    WHERE domain = ?
+    WHERE domain = ? AND enabled = 1
   `).run(new Date().toISOString(), domain);
 }
