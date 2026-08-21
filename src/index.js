@@ -38,7 +38,7 @@ const commands = [
   new SlashCommandBuilder().setName('scan').setDescription('Scan now').addStringOption(option => option.setName('domain').setDescription('Optional domain; blank scans all').setRequired(false)),
   new SlashCommandBuilder().setName('testalert').setDescription('Test the alert channel and role mention'),
   new SlashCommandBuilder().setName('debugchannels').setDescription('List channels visible to the bot'),
-  new SlashCommandBuilder().setName('find').setDescription('Open DotDB domain search by keyword').addStringOption(option => option.setName('keyword').setDescription('Example: uniswap').setRequired(true))
+  new SlashCommandBuilder().setName('find').setDescription('Open DotDB domain searches by keyword').addStringOption(option => option.setName('keyword').setDescription('Example: uniswap').setRequired(true))
 ].map(command => command.toJSON());
 
 function validDomain(domain) {
@@ -231,15 +231,24 @@ client.on('interactionCreate', async interaction => {
         );
       }
 
-      const url = new URL('https://dotdb.com/search');
-      url.searchParams.set('keyword', keyword);
-      url.searchParams.set('position', 'beginning');
+      const makeSearchUrl = position => {
+        const url = new URL('https://dotdb.com/search');
+        url.searchParams.set('keyword', keyword);
+        url.searchParams.set('position', position);
+        return url.toString();
+      };
 
       return interaction.editReply([
-        `Search DotDB for domains beginning with **${keyword}**:`,
-        `<${url.toString()}>`,
+        `DotDB searches for **${keyword}**:`,
         '',
-        'Open the link to view DotDB\'s current results.'
+        `**Beginning with ${keyword}:**`,
+        `<${makeSearchUrl('beginning')}>`,
+        '',
+        `**Ending with ${keyword}:**`,
+        `<${makeSearchUrl('end')}>`,
+        '',
+        `**Containing ${keyword} anywhere:**`,
+        `<${makeSearchUrl('any')}>`
       ].join('\n'));
     }
 
