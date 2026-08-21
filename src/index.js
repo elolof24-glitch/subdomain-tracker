@@ -17,7 +17,6 @@ import {
   removeDomain
 } from './store.js';
 import { normalizeDomain, scanDomain } from './monitor.js';
-import { searchDotdb } from './domainsdb.js';
 
 const token = process.env.DISCORD_TOKEN;
 const clientId = process.env.DISCORD_CLIENT_ID;
@@ -39,7 +38,7 @@ const commands = [
   new SlashCommandBuilder().setName('scan').setDescription('Scan now').addStringOption(option => option.setName('domain').setDescription('Optional domain; blank scans all').setRequired(false)),
   new SlashCommandBuilder().setName('testalert').setDescription('Test the alert channel and role mention'),
   new SlashCommandBuilder().setName('debugchannels').setDescription('List channels visible to the bot'),
-  new SlashCommandBuilder().setName('find').setDescription('Find registered domains by keyword').addStringOption(option => option.setName('keyword').setDescription('Example: pump').setRequired(true))
+  new SlashCommandBuilder().setName('find').setDescription('Open DotDB domain search by keyword').addStringOption(option => option.setName('keyword').setDescription('Example: uniswap').setRequired(true))
 ].map(command => command.toJSON());
 
 function validDomain(domain) {
@@ -56,10 +55,7 @@ function hostnameFile(domain, hostnames) {
     ''
   ].join('\n');
 
-  return Buffer.from(
-    `${header}${hostnames.join('\n')}\n`,
-    'utf8'
-  );
+  return Buffer.from(`${header}${hostnames.join('\n')}\n`, 'utf8');
 }
 
 async function registerCommands() {
@@ -135,14 +131,27 @@ async function notify({ domain, hostnames }) {
   await sendAlert({ domain, hostnames });
 }
 
+let scanRunning = false;
+
 async function scanAllDomains() {
-  for (const monitored of listDomains()) {
-    try {
-      const result = await scanDomain(monitored.domain, notify, { notifyOnFresh: true });
-      console.log(`${result.domain}: ${result.fresh.length} new hostname(s)`);
-    } catch (error) {
-      console.error(`Scan failed for ${monitored.domain}:`, error.message);
+  if (scanRunning) {
+    console.warn('Skipping scan because the previous scan is still running.');
+    return;
+  }
+
+  scanRunning = true;
+
+  try {
+    for (const monitored of listDomains()) {
+      try {
+        const result = await scanDomain(monitored.domain, notify, { notifyOnFresh: true });
+        console.log(`${result.domain}: ${result.fresh.length} new hostname(s)`);
+      } catch (error) {
+        console.error(`Scan failed for ${monitored.domain}:`, error.message);
+      }
     }
+  } finally {
+    scanRunning = false;
   }
 }
 
@@ -210,11 +219,28 @@ client.on('interactionCreate', async interaction => {
 
     if (interaction.commandName === 'find') {
       await interaction.deferReply({ ephemeral: true });
-      const keyword = interaction.options.getString('keyword').trim().toLowerCase();
-      if (!/^[a-z0-9-]{1,63}$/.test(keyword)) return interaction.editReply('Use a keyword containing only letters, numbers, or hyphens.');
-      const domains = await searchDotdb(keyword);
-      const results = domains.slice(0, 90);
-      return interaction.editReply(results.length ? `**Registered domains containing \`${keyword}\`:**\n\n${results.map(domain => `\`${domain}\``).join('\n')}` : `No registered domains found for \`${keyword}\`.`);
+
+      const keyword = interaction.options
+        .getString('keyword')
+        .trim()
+        .toLowerCase();
+
+      if (!/^[a-z0-9-]{1,63}$/.test(keyword)) {
+        return interaction.editReply(
+          'Use a keyword containing only letters, numbers, or hyphens.'
+        );
+      }
+
+      const url = new URL('https://dotdb.com/search');
+      url.searchParams.set('keyword', keyword);
+      url.searchParams.set('position', 'beginning');
+
+      return interaction.editReply([
+        `Search DotDB for domains beginning with **${keyword}**:`,
+        `<${url.toString()}>`,
+        '',
+        'Open the link to view DotDB\'s current results.'
+      ].join('\n'));
     }
 
     if (interaction.commandName === 'scan') {
