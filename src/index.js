@@ -16,7 +16,7 @@ import {
   removeDomain
 } from './store.js';
 import { normalizeDomain, scanDomain } from './monitor.js';
-import { searchDotdb } from './dotdb.js';
+import { searchDotdb } from './domainsdb.js';
 
 const token = process.env.DISCORD_TOKEN;
 const clientId = process.env.DISCORD_CLIENT_ID;
