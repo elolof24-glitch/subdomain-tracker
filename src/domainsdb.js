@@ -9,10 +9,11 @@ export async function searchDotdb(keyword) {
     'https://api.whoisfreaks.com/v1.0/whois'
   );
 
-  url.searchParams.set('whois', 'reverse');
   url.searchParams.set('apiKey', apiKey);
+  url.searchParams.set('whois', 'reverse');
   url.searchParams.set('keyword', keyword);
   url.searchParams.set('format', 'json');
+  url.searchParams.set('page', '1');
 
   const response = await fetch(url, {
     headers: {
@@ -36,35 +37,13 @@ export async function searchDotdb(keyword) {
     throw new Error('WhoisFreaks returned invalid JSON');
   }
 
-  const domains = [];
+  const domainPattern = /\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}\b/gi;
+  const matches = JSON.stringify(data).match(domainPattern) || [];
+  const wanted = keyword.toLowerCase();
 
-  function collect(value) {
-    if (typeof value === 'string') {
-      if (/^[a-z0-9-]+(?:\.[a-z0-9-]+)+$/i.test(value)) {
-        domains.push(value.toLowerCase());
-      }
-      return;
-    }
-
-    if (Array.isArray(value)) {
-      value.forEach(collect);
-      return;
-    }
-
-    if (value && typeof value === 'object') {
-      for (const [key, item] of Object.entries(value)) {
-        if (/domain|domainName|domain_name/i.test(key)) {
-          collect(item);
-        } else if (Array.isArray(item) || (item && typeof item === 'object')) {
-          collect(item);
-        }
-      }
-    }
-  }
-
-  collect(data);
-
-  return [...new Set(domains)]
-    .filter(domain => domain.includes(keyword.toLowerCase()))
-    .sort();
+  return [...new Set(
+    matches
+      .map(domain => domain.toLowerCase().replace(/[),.;:'"\]}]+$/, ''))
+      .filter(domain => domain.includes(wanted))
+  )].sort();
 }
