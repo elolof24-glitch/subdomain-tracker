@@ -1,75 +1,138 @@
-const apiKey = process.env.WHOISFREAKS_API_KEY;
+const requestTimeoutMs = 30000;
 
-if (!apiKey) {
-  throw new Error('WHOISFREAKS_API_KEY is required');
-}
-
-const blockedTlds = new Set([
-  'se',
-  'ru',
-  'email',
-  'club',
-  'online',
-  'video',
-  'tech',
-  'info',
-  'shop',
-  'ltd',
-  'space'
+const allowedTlds = new Set([
+  'com',
+  'net',
+  'org',
+  'io',
+  'xyz',
+  'fun',
+  'fi',
+  'finance',
+  'fund',
+  'exchange',
+  'money',
+  'cash',
+  'co',
+  'me',
+  'gg',
+  'run',
+  'live',
+  'website',
+  'social',
+  'solutions',
+  'pro',
+  'vip',
+  'dao',
+  'defi',
+  'web3',
+  'wallet',
+  'blockchain',
+  'chain'
 ]);
 
-async function fetchPage(keyword, page) {
-  const url = new URL(
-    'https://api.whoisfreaks.com/v1.0/whois'
+function normalizeDomain(value) {
+  return String(value)
+    .trim()
+    .toLowerCase()
+    .replace(/^\*\./, '')
+    .replace(/\.$/, '');
+}
+
+function getTld(domain) {
+  return domain.split('.').at(-1) || '';
+}
+
+function isValidDomain(value) {
+  return (
+    value &&
+    value.includes('.') &&
+    !value.includes(' ') &&
+    !value.includes('..') &&
+    /^[a-z0-9.-]+$/.test(value)
   );
+}
 
-  url.searchParams.set('apiKey', apiKey);
-  url.searchParams.set('whois', 'reverse');
-  url.searchParams.set('keyword', keyword);
-  url.searchParams.set('format', 'json');
-  url.searchParams.set('page', String(page));
+function isAllowedDomain(domain) {
+  return allowedTlds.has(getTld(domain));
+}
 
-  const response = await fetch(url, {
-    headers: {
-      accept: 'application/json'
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function fetchJson(url, attempts = 3) {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
+
+    try {
+      const response = await fetch(url, {
+        signal: controller.signal,
+        headers: {
+          accept: 'application/json',
+          'user-agent': 'subdomain-tracker/1.0'
+        }
+      });
+
+      if (response.status === 429 && attempt < attempts) {
+        await sleep(attempt * 3000);
+        continue;
+      }
+
+      if (!response.ok) {
+        throw new Error(`crt.sh returned HTTP ${response.status}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      if (attempt === attempts) {
+        if (error.name === 'AbortError') {
+          throw new Error('crt.sh request timed out');
+        }
+        throw error;
+      }
+
+      await sleep(attempt * 1500);
+    } finally {
+      clearTimeout(timeout);
     }
-  });
-
-  const text = await response.text();
-
-  if (!response.ok) {
-    throw new Error(
-      `WhoisFreaks error: ${response.status} — ${text.slice(0, 300)}`
-    );
   }
 
-  return JSON.parse(text);
+  return [];
 }
 
 export async function searchDotdb(keyword) {
-  const allDomains = [];
-  const domainPattern =
-    /(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9-]{2,59})/gi;
+  const cleanedKeyword = String(keyword || '').trim().toLowerCase();
 
-  for (let page = 1; page <= 5; page++) {
-    const data = await fetchPage(keyword, page);
-    const matches = JSON.stringify(data).match(domainPattern) || [];
-
-    allDomains.push(...matches);
-
-    if (matches.length === 0) break;
+  if (!/^[a-z0-9-]{1,63}$/.test(cleanedKeyword)) {
+    throw new Error(
+      'Use a keyword containing only letters, numbers, or hyphens.'
+    );
   }
 
-  const wanted = keyword.toLowerCase();
+  const url = new URL('https://crt.sh/');
+  url.searchParams.set('q', `%25${cleanedKeyword}%25`);
+  url.searchParams.set('output', 'json');
 
-  return [...new Set(
-    allDomains
-      .map(domain => domain.toLowerCase())
-      .filter(domain => domain.includes(wanted))
-      .filter(domain => {
-        const parts = domain.split('.');
-        const tld = parts[parts.length - 1];
-        return !blockedTlds.has(tld);
-      })
-  )].sort();
+  const records = await fetchJson(url);
+  const domains = new Set();
+
+  for (const record of records) {
+    const names = String(record.name_value || '').split(/\r?\n/);
+
+    for (const name of names) {
+      const domain = normalizeDomain(name);
+
+      if (
+        isValidDomain(domain) &&
+        domain.includes(cleanedKeyword) &&
+        isAllowedDomain(domain)
+      ) {
+        domains.add(domain);
+      }
+    }
+  }
+
+  return [...domains].sort();
 }
