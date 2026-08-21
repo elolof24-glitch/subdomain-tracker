@@ -21,79 +21,24 @@ import { searchDotdb } from './domainsdb.js';
 const token = process.env.DISCORD_TOKEN;
 const clientId = process.env.DISCORD_CLIENT_ID;
 const guildId = String(process.env.DISCORD_GUILD_ID || '').trim();
+const rawChannelId = String(process.env.DISCORD_ALERT_CHANNEL_ID || '').trim();
+const alertChannelId = rawChannelId.includes('/') ? rawChannelId.split('/').pop() : rawChannelId;
+const alertRoleId = String(process.env.DISCORD_ALERT_ROLE_ID || '').trim();
 
-const rawChannelId = String(
-  process.env.DISCORD_ALERT_CHANNEL_ID || ''
-).trim();
+if (!token || !clientId) throw new Error('DISCORD_TOKEN and DISCORD_CLIENT_ID are required');
+if (!guildId) throw new Error('DISCORD_GUILD_ID is required');
+if (!alertChannelId) throw new Error('DISCORD_ALERT_CHANNEL_ID is required');
 
-const alertChannelId = rawChannelId.includes('/')
-  ? rawChannelId.split('/').pop()
-  : rawChannelId;
-
-const alertRoleId = String(
-  process.env.DISCORD_ALERT_ROLE_ID || ''
-).trim();
-
-if (!token || !clientId) {
-  throw new Error('DISCORD_TOKEN and DISCORD_CLIENT_ID are required');
-}
-
-if (!guildId) {
-  throw new Error('DISCORD_GUILD_ID is required');
-}
-
-if (!alertChannelId) {
-  throw new Error('DISCORD_ALERT_CHANNEL_ID is required');
-}
-
-const client = new Client({
-  intents: [GatewayIntentBits.Guilds]
-});
+const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
 const commands = [
-  new SlashCommandBuilder()
-    .setName('add')
-    .setDescription('Monitor a domain for new subdomains')
-    .addStringOption(option => option
-      .setName('domain')
-      .setDescription('Example: pump.fun')
-      .setRequired(true)),
-
-  new SlashCommandBuilder()
-    .setName('remove')
-    .setDescription('Stop monitoring a domain')
-    .addStringOption(option => option
-      .setName('domain')
-      .setDescription('Example: pump.fun')
-      .setRequired(true)),
-
-  new SlashCommandBuilder()
-    .setName('list')
-    .setDescription('List monitored domains'),
-
-  new SlashCommandBuilder()
-    .setName('scan')
-    .setDescription('Scan now')
-    .addStringOption(option => option
-      .setName('domain')
-      .setDescription('Optional domain; blank scans all')
-      .setRequired(false)),
-
-  new SlashCommandBuilder()
-    .setName('testalert')
-    .setDescription('Test the alert channel and role mention'),
-
-  new SlashCommandBuilder()
-    .setName('debugchannels')
-    .setDescription('List channels visible to the bot'),
-
-  new SlashCommandBuilder()
-    .setName('find')
-    .setDescription('Find registered domains by keyword')
-    .addStringOption(option => option
-      .setName('keyword')
-      .setDescription('Example: pump')
-      .setRequired(true))
+  new SlashCommandBuilder().setName('add').setDescription('Monitor a domain for new subdomains').addStringOption(option => option.setName('domain').setDescription('Example: pump.fun').setRequired(true)),
+  new SlashCommandBuilder().setName('remove').setDescription('Stop monitoring a domain').addStringOption(option => option.setName('domain').setDescription('Example: pump.fun').setRequired(true)),
+  new SlashCommandBuilder().setName('list').setDescription('List monitored domains'),
+  new SlashCommandBuilder().setName('scan').setDescription('Scan now').addStringOption(option => option.setName('domain').setDescription('Optional domain; blank scans all').setRequired(false)),
+  new SlashCommandBuilder().setName('testalert').setDescription('Test the alert channel and role mention'),
+  new SlashCommandBuilder().setName('debugchannels').setDescription('List channels visible to the bot'),
+  new SlashCommandBuilder().setName('find').setDescription('Find registered domains by keyword').addStringOption(option => option.setName('keyword').setDescription('Example: pump').setRequired(true))
 ].map(command => command.toJSON());
 
 function validDomain(domain) {
@@ -102,81 +47,52 @@ function validDomain(domain) {
 
 async function registerCommands() {
   const rest = new REST({ version: '10' }).setToken(token);
-  await rest.put(
-    Routes.applicationGuildCommands(clientId, guildId),
-    { body: commands }
-  );
+  await rest.put(Routes.applicationGuildCommands(clientId, guildId), { body: commands });
 }
 
 function alertEmbed(domain, hostnames) {
-  const formattedHostnames = hostnames
-    .slice(0, 25)
-    .map(hostname => '`' + hostname + '`')
-    .join('\n');
+  const formattedHostnames = hostnames.slice(0, 25).map(hostname => `\`${hostname}\``).join('\n');
 
   return new EmbedBuilder()
     .setColor(0x20e0a0)
-    .setTitle('🚨 New Subdomains Added')
-    .setDescription('New subdomains observed for **' + domain + '**.')
+    .setTitle('🔔 New subdomains found')
+    .setDescription(`Monitoring scan detected new hostnames for **${domain}**.`)
     .addFields({
       name: 'Hostnames',
       value: formattedHostnames || 'No hostname details available.'
     })
-    .setFooter({ text: 'Subdomain Tracker • Certificate Transparency' })
+    .setFooter({ text: 'cnig69' })
     .setTimestamp();
 }
 
 function roleMention() {
-  return alertRoleId ? '<@&' + alertRoleId + '>' : '';
+  return alertRoleId ? `<@&${alertRoleId}>` : '';
 }
 
 async function getAlertChannel() {
   const guild = await client.guilds.fetch(guildId);
   const channels = await guild.channels.fetch();
+  const channel = [...channels.values()].find(item => item && String(item.id) === String(alertChannelId));
 
-  const channel = [...channels.values()].find(
-    item => item && String(item.id) === String(alertChannelId)
-  );
-
-  if (!channel) {
-    throw new Error(
-      'Alert channel ' + alertChannelId + ' was not found in guild ' + guildId
-    );
-  }
-
-  if (
-    channel.type !== ChannelType.GuildText &&
-    channel.type !== ChannelType.GuildAnnouncement
-  ) {
+  if (!channel) throw new Error(`Alert channel ${alertChannelId} was not found in guild ${guildId}`);
+  if (channel.type !== ChannelType.GuildText && channel.type !== ChannelType.GuildAnnouncement) {
     throw new Error('Alert channel must be a normal text or announcement channel');
   }
 
   const permissions = channel.permissionsFor(client.user);
-
-  if (!permissions?.has(PermissionFlagsBits.ViewChannel)) {
-    throw new Error('Bot lacks View Channel permission in the alert channel');
-  }
-
-  if (!permissions.has(PermissionFlagsBits.SendMessages)) {
-    throw new Error('Bot lacks Send Messages permission in the alert channel');
-  }
-
-  if (!permissions.has(PermissionFlagsBits.EmbedLinks)) {
-    throw new Error('Bot lacks Embed Links permission in the alert channel');
-  }
+  if (!permissions?.has(PermissionFlagsBits.ViewChannel)) throw new Error('Bot lacks View Channel permission in the alert channel');
+  if (!permissions.has(PermissionFlagsBits.SendMessages)) throw new Error('Bot lacks Send Messages permission in the alert channel');
+  if (!permissions.has(PermissionFlagsBits.EmbedLinks)) throw new Error('Bot lacks Embed Links permission in the alert channel');
 
   return channel;
 }
 
 async function sendAlert({ domain, hostnames }) {
   const channel = await getAlertChannel();
-
   await channel.send({
     content: roleMention(),
     embeds: [alertEmbed(domain, hostnames)],
-    allowedMentions: {
-      roles: alertRoleId ? [alertRoleId] : []
-    }
+    allowedMentions: { roles: alertRoleId ? [alertRoleId] : [] }
   });
 }
 
@@ -187,25 +103,25 @@ async function notify({ domain, hostnames }) {
 async function scanAllDomains() {
   for (const monitored of listDomains()) {
     try {
-      const result = await scanDomain(monitored.domain, notify);
-      console.log(result.domain + ': ' + result.fresh.length + ' new hostname(s)');
+      const result = await scanDomain(monitored.domain, notify, { notifyOnFresh: true });
+      console.log(`${result.domain}: ${result.fresh.length} new hostname(s)`);
     } catch (error) {
-      console.error('Scan failed for ' + monitored.domain + ':', error.message);
+      console.error(`Scan failed for ${monitored.domain}:`, error.message);
     }
   }
 }
 
 client.once('ready', async () => {
   await registerCommands();
-  console.log('Logged in as ' + client.user.tag);
-  console.log('Guild: ' + guildId);
-  console.log('Alerts channel: ' + alertChannelId);
-  console.log('Alerts role: ' + (alertRoleId || 'none'));
+  console.log(`Logged in as ${client.user.tag}`);
+  console.log(`Guild: ${guildId}`);
+  console.log(`Alerts channel: ${alertChannelId}`);
+  console.log(`Alerts role: ${alertRoleId || 'none'}`);
 
   await scanAllDomains();
 
   const seconds = Math.max(10, Number(process.env.POLL_SECONDS || 60));
-  console.log('Polling every ' + seconds + ' seconds.');
+  console.log(`Polling every ${seconds} seconds.`);
   setInterval(scanAllDomains, seconds * 1000);
 });
 
@@ -216,38 +132,22 @@ client.on('interactionCreate', async interaction => {
     if (interaction.commandName === 'add') {
       await interaction.deferReply({ ephemeral: true });
       const domain = normalizeDomain(interaction.options.getString('domain'));
-
-      if (!validDomain(domain)) {
-        return interaction.editReply('Use a domain such as `pump.fun`.');
-      }
-
+      if (!validDomain(domain)) return interaction.editReply('Use a domain such as `pump.fun`.');
       addDomain(domain);
-      return interaction.editReply(
-        'Monitoring **' + domain + '**. Run `/scan domain:' + domain + '` for the baseline.'
-      );
+      return interaction.editReply(`Monitoring **${domain}**. Run \`/scan domain:${domain}\` for the baseline.`);
     }
 
     if (interaction.commandName === 'remove') {
       await interaction.deferReply({ ephemeral: true });
       const domain = normalizeDomain(interaction.options.getString('domain'));
       const result = removeDomain(domain);
-
-      return interaction.editReply(
-        result.changes
-          ? 'Stopped monitoring **' + domain + '**.'
-          : '**' + domain + '** was not monitored.'
-      );
+      return interaction.editReply(result.changes ? `Stopped monitoring **${domain}**.` : `**${domain}** was not monitored.`);
     }
 
     if (interaction.commandName === 'list') {
       const domains = listDomains();
-
       return interaction.reply({
-        content: domains.length
-          ? domains.map(item =>
-              '• **' + item.domain + '** — last scan: ' + (item.last_scan || 'never')
-            ).join('\n')
-          : 'No domains are monitored.',
+        content: domains.length ? domains.map(item => `• **${item.domain}** — last scan: ${item.last_scan || 'never'}`).join('\n') : 'No domains are monitored.',
         ephemeral: true
       });
     }
@@ -256,48 +156,25 @@ client.on('interactionCreate', async interaction => {
       await interaction.deferReply({ ephemeral: true });
       const guild = await client.guilds.fetch(guildId);
       const channels = await guild.channels.fetch();
-      const output = [...channels.values()]
-        .filter(Boolean)
-        .map(channel =>
-          (channel.name || 'unnamed') + ' — ' + channel.id + ' — type ' + channel.type
-        )
-        .join('\n');
-
+      const output = [...channels.values()].filter(Boolean).map(channel => `${channel.name || 'unnamed'} — ${channel.id} — type ${channel.type}`).join('\n');
       return interaction.editReply(output || 'No channels are visible to the bot.');
     }
 
     if (interaction.commandName === 'testalert') {
       await interaction.deferReply({ ephemeral: true });
-      await sendAlert({
-        domain: 'example.com',
-        hostnames: ['test.example.com']
-      });
+      await sendAlert({ domain: 'example.com', hostnames: ['test.example.com'] });
       return interaction.editReply('Test alert sent.');
     }
 
     if (interaction.commandName === 'find') {
       await interaction.deferReply({ ephemeral: true });
-
-      const keyword = interaction.options
-        .getString('keyword')
-        .trim()
-        .toLowerCase();
-
+      const keyword = interaction.options.getString('keyword').trim().toLowerCase();
       if (!/^[a-z0-9-]{1,63}$/.test(keyword)) {
-        return interaction.editReply(
-          'Use a keyword containing only letters, numbers, or hyphens.'
-        );
+        return interaction.editReply('Use a keyword containing only letters, numbers, or hyphens.');
       }
-
       const domains = await searchDotdb(keyword);
       const results = domains.slice(0, 90);
-
-      return interaction.editReply(
-        results.length
-          ? '**Registered domains containing `' + keyword + '`: **\n\n' +
-            results.map(domain => '`' + domain + '`').join('\n')
-          : 'No registered domains found for `' + keyword + '`.'
-      );
+      return interaction.editReply(results.length ? `**Registered domains containing \`${keyword}\`:**\n\n${results.map(domain => `\`${domain}\``).join('\n')}` : `No registered domains found for \`${keyword}\`.`);
     }
 
     if (interaction.commandName === 'scan') {
@@ -306,31 +183,34 @@ client.on('interactionCreate', async interaction => {
 
       if (requested) {
         const domain = normalizeDomain(requested);
+        if (!getDomain(domain)) return interaction.editReply('That domain is not monitored.');
 
-        if (!getDomain(domain)) {
-          return interaction.editReply('That domain is not monitored.');
-        }
-
-        const result = await scanDomain(domain, notify);
-        return interaction.editReply(
-          'Scanned **' + domain + '**: ' + result.total +
-          ' observed, ' + result.fresh.length + ' new.'
-        );
+        const result = await scanDomain(domain, null, { notifyOnFresh: false });
+        return interaction.editReply([
+          `Scan complete for **${domain}**.`,
+          `Found ${result.total} subdomain(s).`,
+          result.fresh.length > 0 ? `${result.fresh.length} hostname(s) were new to the tracker.` : 'No new hostnames since the previous scan.'
+        ].join('\n'));
       }
 
-      await scanAllDomains();
-      return interaction.editReply('Scanned all monitored domains.');
+      const results = [];
+      for (const monitored of listDomains()) {
+        try {
+          const result = await scanDomain(monitored.domain, null, { notifyOnFresh: false });
+          results.push(`• **${result.domain}** — ${result.total} observed, ${result.fresh.length} new to the tracker`);
+        } catch (error) {
+          results.push(`• **${monitored.domain}** — error: ${error.message}`);
+        }
+      }
+
+      return interaction.editReply(results.length ? `Manual scan complete.\n${results.join('\n')}` : 'No domains are monitored.');
     }
   } catch (error) {
     console.error(error);
-
     if (interaction.deferred || interaction.replied) {
-      await interaction.editReply('Error: ' + error.message);
+      await interaction.editReply(`Error: ${error.message}`);
     } else {
-      await interaction.reply({
-        content: 'Error: ' + error.message,
-        ephemeral: true
-      });
+      await interaction.reply({ content: `Error: ${error.message}`, ephemeral: true });
     }
   }
 });
