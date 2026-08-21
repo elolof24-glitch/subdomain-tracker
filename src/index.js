@@ -38,7 +38,7 @@ const commands = [
   new SlashCommandBuilder().setName('scan').setDescription('Scan now').addStringOption(option => option.setName('domain').setDescription('Optional domain; blank scans all').setRequired(false)),
   new SlashCommandBuilder().setName('testalert').setDescription('Test the alert channel and role mention'),
   new SlashCommandBuilder().setName('debugchannels').setDescription('List channels visible to the bot'),
-  new SlashCommandBuilder().setName('find').setDescription('Open compact DotDB searches by keyword').addStringOption(option => option.setName('keyword').setDescription('Example: uniswap').setRequired(true))
+  new SlashCommandBuilder().setName('find').setDescription('Open DotDB domain searches by keyword').addStringOption(option => option.setName('keyword').setDescription('Example: uniswap').setRequired(true))
 ].map(command => command.toJSON());
 
 function validDomain(domain) {
@@ -218,16 +218,17 @@ client.on('interactionCreate', async interaction => {
     }
 
     if (interaction.commandName === 'find') {
+      await interaction.deferReply({ ephemeral: true });
+
       const keyword = interaction.options
         .getString('keyword')
         .trim()
         .toLowerCase();
 
       if (!/^[a-z0-9-]{1,63}$/.test(keyword)) {
-        return interaction.reply({
-          content: 'Use a keyword containing only letters, numbers, or hyphens.',
-          ephemeral: true
-        });
+        return interaction.editReply(
+          'Use a keyword containing only letters, numbers, or hyphens.'
+        );
       }
 
       const makeSearchUrl = position => {
@@ -237,16 +238,18 @@ client.on('interactionCreate', async interaction => {
         return url.toString();
       };
 
-      const links = [
-        `[Beginning](<${makeSearchUrl('beginning')}>)`,
-        `[Ending](<${makeSearchUrl('end')}>)`,
-        `[Anywhere](<${makeSearchUrl('any')}>)`
-      ].join('  •  ');
-
-      return interaction.reply({
-        content: `**DotDB · ${keyword}**\n${links}`,
-        ephemeral: true
-      });
+      return interaction.editReply([
+        `DotDB searches for **${keyword}**:`,
+        '',
+        `**Beginning with ${keyword}:**`,
+        `<${makeSearchUrl('beginning')}>`,
+        '',
+        `**Ending with ${keyword}:**`,
+        `<${makeSearchUrl('end')}>`,
+        '',
+        `**Containing ${keyword} anywhere:**`,
+        `<${makeSearchUrl('any')}>`
+      ].join('\n'));
     }
 
     if (interaction.commandName === 'scan') {
